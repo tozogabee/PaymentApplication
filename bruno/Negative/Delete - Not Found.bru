@@ -1,0 +1,14 @@
+meta {
+  name: Delete - Not Found
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/payments/11111111-1111-1111-1111-111111111111
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}

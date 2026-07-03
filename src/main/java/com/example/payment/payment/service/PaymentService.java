@@ -1,9 +1,9 @@
 package com.example.payment.payment.service;
 
+import com.example.payment.api.model.PaymentStatus;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
-import com.example.payment.payment.model.PaymentStatus;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;

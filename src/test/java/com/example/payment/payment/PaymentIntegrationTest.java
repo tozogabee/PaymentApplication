@@ -77,7 +77,9 @@ class PaymentIntegrationTest {
 
         // delete
         mockMvc.perform(delete("/payments/{id}", id))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Payment deleted successfully"))
+                .andExpect(jsonPath("$.id").value(id));
         mockMvc.perform(get("/payments/{id}", id))
                 .andExpect(status().isNotFound());
 

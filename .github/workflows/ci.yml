@@ -23,3 +23,23 @@ jobs:
 
       - name: Build and verify
         run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Start application stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+
+      - name: Run Bruno API tests
+        working-directory: bruno
+        run: npx --yes @usebruno/cli run -r --env Local --reporter-junit results.xml
+
+      - name: Print application logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

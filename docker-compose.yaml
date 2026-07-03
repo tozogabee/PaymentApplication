@@ -1,4 +1,24 @@
 services:
+  app:
+    build: .
+    container_name: payment-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/payment
+      DB_USERNAME: payment
+      DB_PASSWORD: payment
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     container_name: payment-postgres

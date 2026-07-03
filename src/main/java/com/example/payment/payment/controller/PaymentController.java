@@ -1,6 +1,7 @@
 package com.example.payment.payment.controller;
 
 import com.example.payment.api.PaymentsApi;
+import com.example.payment.api.model.DeletePaymentResponse;
 import com.example.payment.api.model.PaymentRequest;
 import com.example.payment.api.model.PaymentResponse;
 import com.example.payment.payment.mapper.PaymentMapper;
@@ -54,8 +55,10 @@ public class PaymentController implements PaymentsApi {
     }
 
     @Override
-    public ResponseEntity<Void> deletePayment(UUID id) {
+    public ResponseEntity<DeletePaymentResponse> deletePayment(UUID id) {
         service.delete(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(new DeletePaymentResponse()
+                .message("Payment deleted successfully")
+                .id(id));
     }
 }

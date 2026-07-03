@@ -1,0 +1,26 @@
+meta {
+  name: Create - Malformed JSON
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": ,
+    "currency": "EUR"
+  }
+}
+
+assert {
+  res.status: eq 400
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Create - Invalid Currency
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 100.0,
+    "currency": "EURO",
+    "debtorAccount": "DE123456789",
+    "creditorAccount": "DE987654321"
+  }
+}
+
+assert {
+  res.status: eq 400
+}

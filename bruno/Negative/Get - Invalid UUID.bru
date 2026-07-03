@@ -1,0 +1,14 @@
+meta {
+  name: Get - Invalid UUID
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/payments/not-a-uuid
+  auth: none
+}
+
+assert {
+  res.status: eq 400
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Get All Payments
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/payments
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+  res.body: length.gte 1
+}

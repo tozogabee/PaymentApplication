@@ -84,8 +84,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PaymentId'
       responses:
-        '204':
+        '200':
           description: Payment deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletePaymentResponse'
         '404':
           description: Payment not found
 components:
@@ -101,6 +105,14 @@ components:
     PaymentStatus:
       type: string
       enum: [CREATED, COMPLETED, FAILED]
+    DeletePaymentResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        id:
+          type: string
+          format: uuid
     PaymentRequest:
       type: object
       required: [amount, currency, debtorAccount, creditorAccount]

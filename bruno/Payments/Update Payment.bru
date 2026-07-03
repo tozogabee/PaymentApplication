@@ -1,0 +1,32 @@
+meta {
+  name: Update Payment
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 150.0,
+    "currency": "EUR",
+    "debtorAccount": "DE123456789",
+    "creditorAccount": "DE987654321"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{paymentId}}
+  res.body.amount: eq 150.0
+  res.body.modifiedAt: isDefined
+  res.body.modifiedBy: eq system
+}

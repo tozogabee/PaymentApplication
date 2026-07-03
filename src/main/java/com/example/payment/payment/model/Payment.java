@@ -1,5 +1,6 @@
 package com.example.payment.payment.model;
 
+import com.example.payment.api.model.PaymentStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;

@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.model.Payment;
-import com.example.payment.payment.model.PaymentStatus;
+import com.example.payment.api.model.PaymentStatus;
 import com.example.payment.payment.service.PaymentService;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -86,11 +86,13 @@ class PaymentControllerTest {
     }
 
     @Test
-    void deletePaymentReturns204() throws Exception {
+    void deletePaymentReturns200WithMessageAndId() throws Exception {
         UUID id = UUID.randomUUID();
 
         mockMvc.perform(delete("/payments/{id}", id))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Payment deleted successfully"))
+                .andExpect(jsonPath("$.id").value(id.toString()));
 
         verify(service).delete(id);
     }

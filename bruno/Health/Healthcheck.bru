@@ -1,0 +1,17 @@
+meta {
+  name: Healthcheck
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/actuator/health
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq UP
+  res.body.components.db.status: eq UP
+  res.body.components.diskSpace.status: eq UP
+}
