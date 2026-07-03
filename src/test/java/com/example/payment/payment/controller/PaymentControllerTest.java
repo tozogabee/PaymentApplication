@@ -16,6 +16,7 @@ import com.example.payment.payment.exception.PaymentNotUpdatableException;
 import com.example.payment.payment.mapper.PaymentMapperImpl;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.api.model.PaymentStatus;
+import com.example.payment.payment.service.PaymentCreationResult;
 import com.example.payment.payment.service.PaymentService;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -54,7 +55,8 @@ class PaymentControllerTest {
     @Test
     void createPaymentReturns201() throws Exception {
         UUID id = UUID.randomUUID();
-        when(service.create(any(), any(), any(), any())).thenReturn(samplePayment(id));
+        when(service.create(any(), any(), any(), any()))
+                .thenReturn(new PaymentCreationResult(samplePayment(id), true));
 
         mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -68,6 +70,22 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.currency").value("EUR"));
 
         verify(service).create(new BigDecimal("100.0"), "EUR", "DE123456789", "DE987654321");
+    }
+
+    @Test
+    void createIgnoredDuplicateReturns200() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.create(any(), any(), any(), any()))
+                .thenReturn(new PaymentCreationResult(samplePayment(id), false));
+
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":100.0,"currency":"EUR",
+                                 "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()));
     }
 
     @Test
@@ -108,6 +126,16 @@ class PaymentControllerTest {
 
         mockMvc.perform(get("/payments/{id}", id))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void unexpectedErrorReturns500() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.get(eq(id))).thenThrow(new RuntimeException("boom"));
+
+        mockMvc.perform(get("/payments/{id}", id))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.detail").value("An unexpected error occurred"));
     }
 
     @Test

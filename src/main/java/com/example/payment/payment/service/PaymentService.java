@@ -7,6 +7,7 @@ import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,12 +22,25 @@ public class PaymentService {
     private final PaymentRepository repository;
 
     @Transactional
-    public Payment create(BigDecimal amount, String currency, String debtorAccount, String creditorAccount) {
+    public PaymentCreationResult create(BigDecimal amount, String currency, String debtorAccount,
+            String creditorAccount) {
         String normalizedCurrency = currency.toUpperCase();
+
         boolean duplicate = repository.existsByDebtorAccountAndCreditorAccountAndAmountAndCurrency(
                 debtorAccount, creditorAccount, amount, normalizedCurrency);
+
+        Optional<Payment> existingFailed =
+                repository.findFirstByDebtorAccountAndCreditorAccountAndAmountAndCurrencyAndStatus(
+                        debtorAccount, creditorAccount, amount, normalizedCurrency, PaymentStatus.FAILED);
+        if (existingFailed.isPresent()) {
+            log.error("A FAILED payment already exists (debtor={}, creditor={}, amount={} {}) "
+                            + "- ignoring new create, nothing persisted",
+                    debtorAccount, creditorAccount, amount, normalizedCurrency);
+            return new PaymentCreationResult(existingFailed.get(), false);
+        }
+
         if (duplicate) {
-            log.warn("Duplicate payment detected (debtor={}, creditor={}, amount={} {}) - marking as FAILED",
+            log.error("Duplicate payment detected (debtor={}, creditor={}, amount={} {}) - marking as FAILED",
                     debtorAccount, creditorAccount, amount, normalizedCurrency);
         }
         Payment payment = Payment.builder()
@@ -39,7 +53,7 @@ public class PaymentService {
         Payment saved = repository.save(payment);
         log.info("Created payment id={} status={} amount={} {}",
                 saved.getId(), saved.getStatus(), saved.getAmount(), saved.getCurrency());
-        return saved;
+        return new PaymentCreationResult(saved, true);
     }
 
     @Transactional(readOnly = true)
@@ -58,9 +72,9 @@ public class PaymentService {
 
     @Transactional
     public Payment update(UUID id, BigDecimal amount, String currency, String debtorAccount, String creditorAccount) {
-        Payment payment = get(id);
+        Payment payment = this.get(id);
         if (payment.getStatus() != PaymentStatus.CREATED) {
-            log.warn("Update rejected for payment id={} because status is {} (only CREATED is updatable)",
+            log.error("Update rejected for payment id={} because status is {} (only CREATED is updatable)",
                     id, payment.getStatus());
             throw new PaymentNotUpdatableException(
                     "Payment is failed",

@@ -13,6 +13,7 @@ H2 for local testing, with database schema managed by Flyway.
 - [REST API](#rest-api)
 - [Project layout](#project-layout)
 - [Configuration & profiles](#configuration--profiles)
+- [Building the project](#building-the-project)
 - [Running the application](#running-the-application)
 - [Running with Docker](#running-with-docker)
 - [Database migrations (Flyway)](#database-migrations-flyway)
@@ -111,9 +112,13 @@ Response (`201 Created`):
 
 ### Duplicate detection
 
-A new payment is considered a **duplicate** when its `debtorAccount`, `creditorAccount`, `amount`,
-and `currency` all match an existing payment. A duplicate is still created (`201 Created`) but its
-status is set to **`FAILED`** instead of `CREATED`.
+A new payment is a **duplicate** when its `debtorAccount`, `creditorAccount`, `amount`, and
+`currency` all match an existing payment. Handling:
+
+- **No match** → created with status `CREATED` (`201 Created`).
+- **Match exists, none `FAILED`** → created with status `FAILED` (`201 Created`).
+- **A `FAILED` match already exists** → the request is **ignored** (nothing is persisted); the
+  existing `FAILED` payment is returned with **`200 OK`** (not `201`, since nothing was created).
 
 ### Example — delete a payment
 
@@ -216,6 +221,35 @@ The default profile reads its datasource from environment variables (with local 
 | `DB_URL`      | `jdbc:postgresql://localhost:5432/payment`   |
 | `DB_USERNAME` | `payment`                                    |
 | `DB_PASSWORD` | `payment`                                    |
+
+---
+
+## Building the project
+
+### Prerequisites
+
+- JDK 21 (the Maven wrapper `./mvnw` is included — no local Maven install needed)
+- Docker running (only required for the tests, which use Testcontainers)
+
+### Build
+
+```bash
+./mvnw clean package          # compile + run tests + produce the runnable jar
+./mvnw clean package -DskipTests   # build without running tests (no Docker needed)
+```
+
+The build also **generates code** during `generate-sources`:
+
+- the REST API interfaces/models from `openapi/payment-api.yaml` (openapi-generator), and
+- the `PaymentMapperImpl` (MapStruct).
+
+Output: `target/payment-0.0.1-SNAPSHOT.jar` (an executable Spring Boot jar).
+
+To build the Docker image instead:
+
+```bash
+docker compose build          # builds the image via the multi-stage Dockerfile
+```
 
 ---
 
@@ -348,8 +382,8 @@ health endpoint:
 - `Health/` — actuator health check
 - `Payments/` — full lifecycle (create → get → list → update to `COMPLETED` → reject re-update
   `409` → delete → verify deleted)
-- `Duplicate/` — creates the same payment twice (`CREATED` then `FAILED`) and deletes both
-  (self-cleaning, so it stays repeatable)
+- `Duplicate/` — creates the same payment (`CREATED` → `FAILED` → ignored third create returns the
+  existing `FAILED`) and deletes the persisted rows (self-cleaning, so it stays repeatable)
 - `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
   malformed JSON, invalid UUID) and `404`s (get/update/delete unknown id)
 

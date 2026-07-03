@@ -149,6 +149,42 @@ class PaymentIntegrationTest {
     }
 
     @Test
+    void createDuplicateOfFailedPaymentIsIgnored() throws Exception {
+        String body = """
+                {"amount":88.0,"currency":"EUR",
+                 "debtorAccount":"IGN-DEBTOR","creditorAccount":"IGN-CREDITOR"}
+                """;
+
+        // #1 -> CREATED
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CREATED"));
+
+        // #2 -> duplicate, persisted as FAILED
+        String failedBody = mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andReturn().getResponse().getContentAsString();
+        String failedId = objectMapper.readTree(failedBody).get("id").asString();
+
+        long countAfterFailed = repository.count();
+
+        // #3 -> a FAILED already exists, so this is ignored (nothing persisted, 200) and returns it
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.id").value(failedId));
+
+        assertThat(repository.count()).isEqualTo(countAfterFailed);
+    }
+
+    @Test
     void deleteUnknownPaymentReturns404() throws Exception {
         mockMvc.perform(delete("/payments/{id}", "11111111-1111-1111-1111-111111111111"))
                 .andExpect(status().isNotFound());

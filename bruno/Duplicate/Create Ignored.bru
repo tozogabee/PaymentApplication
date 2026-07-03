@@ -1,0 +1,36 @@
+meta {
+  name: Create Ignored
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 33.0,
+    "currency": "EUR",
+    "debtorAccount": "BRU-DUP-DEBTOR",
+    "creditorAccount": "BRU-DUP-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq FAILED
+  res.body.id: eq {{dupSecondId}}
+}
+
+docs {
+  A FAILED payment already exists for this debtor/creditor/amount/currency, so this
+  create is ignored (nothing persisted) and the existing FAILED payment is returned
+  (same id as the previous "Create Duplicate" request).
+}
