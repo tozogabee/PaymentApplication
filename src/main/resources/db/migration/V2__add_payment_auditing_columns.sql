@@ -1,0 +1,3 @@
+ALTER TABLE payments ADD COLUMN created_by  VARCHAR(255);
+ALTER TABLE payments ADD COLUMN modified_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE payments ADD COLUMN modified_by VARCHAR(255);

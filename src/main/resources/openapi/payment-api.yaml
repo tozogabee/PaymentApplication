@@ -1,0 +1,147 @@
+openapi: 3.0.3
+info:
+  title: Payment API
+  description: Service for managing payments.
+  version: 1.0.0
+tags:
+  - name: payments
+    description: Payment operations
+paths:
+  /payments:
+    get:
+      tags: [payments]
+      operationId: getAllPayments
+      summary: Returns all payments.
+      responses:
+        '200':
+          description: All payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentResponse'
+    post:
+      tags: [payments]
+      operationId: createPayment
+      summary: Creates a new payment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '201':
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Invalid request
+  /payments/{id}:
+    get:
+      tags: [payments]
+      operationId: getPaymentById
+      summary: Returns a payment by ID.
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '404':
+          description: Payment not found
+    put:
+      tags: [payments]
+      operationId: updatePayment
+      summary: Updates an existing payment.
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Updated payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '404':
+          description: Payment not found
+    delete:
+      tags: [payments]
+      operationId: deletePayment
+      summary: Deletes a payment.
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '204':
+          description: Payment deleted
+        '404':
+          description: Payment not found
+components:
+  parameters:
+    PaymentId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    PaymentStatus:
+      type: string
+      enum: [CREATED, COMPLETED, FAILED]
+    PaymentRequest:
+      type: object
+      required: [amount, currency, debtorAccount, creditorAccount]
+      properties:
+        amount:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        debtorAccount:
+          type: string
+          minLength: 1
+        creditorAccount:
+          type: string
+          minLength: 1
+    PaymentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+        debtorAccount:
+          type: string
+        creditorAccount:
+          type: string
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        modifiedAt:
+          type: string
+          format: date-time
+        modifiedBy:
+          type: string
