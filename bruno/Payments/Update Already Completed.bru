@@ -1,7 +1,7 @@
 meta {
-  name: Update Payment
+  name: Update Already Completed
   type: http
-  seq: 4
+  seq: 5
 }
 
 put {
@@ -16,7 +16,7 @@ headers {
 
 body:json {
   {
-    "amount": 150.0,
+    "amount": 200.0,
     "currency": "EUR",
     "debtorAccount": "DE123456789",
     "creditorAccount": "DE987654321"
@@ -24,10 +24,9 @@ body:json {
 }
 
 assert {
-  res.status: eq 200
-  res.body.id: eq {{paymentId}}
-  res.body.amount: eq 150.0
+  res.status: eq 409
+  res.body.message: eq Payment is failed
+  res.body.debtorAccount: eq DE123456789
+  res.body.creditorAccount: eq DE987654321
   res.body.status: eq COMPLETED
-  res.body.modifiedAt: isDefined
-  res.body.modifiedBy: eq system
 }

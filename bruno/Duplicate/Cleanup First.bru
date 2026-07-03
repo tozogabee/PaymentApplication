@@ -1,0 +1,14 @@
+meta {
+  name: Cleanup First
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/payments/{{dupFirstId}}
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

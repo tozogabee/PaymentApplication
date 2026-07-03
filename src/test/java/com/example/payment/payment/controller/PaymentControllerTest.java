@@ -7,10 +7,13 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.payment.payment.exception.PaymentNotFoundException;
+import com.example.payment.payment.exception.PaymentNotUpdatableException;
+import com.example.payment.payment.mapper.PaymentMapperImpl;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.api.model.PaymentStatus;
 import com.example.payment.payment.service.PaymentService;
@@ -20,11 +23,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PaymentController.class)
+@Import(PaymentMapperImpl.class)
 class PaymentControllerTest {
 
     @Autowired
@@ -74,6 +79,26 @@ class PaymentControllerTest {
                                  "debtorAccount":"","creditorAccount":"x"}
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void updateAlreadyCompletedPaymentReturns409() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.update(eq(id), any(), any(), any(), any()))
+                .thenThrow(new PaymentNotUpdatableException(
+                        "Payment is failed", "DE123456789", "DE987654321", PaymentStatus.COMPLETED));
+
+        mockMvc.perform(put("/payments/{id}", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":150.0,"currency":"EUR",
+                                 "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Payment is failed"))
+                .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
+                .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
 
     @Test

@@ -18,3 +18,7 @@ management:
     health:
       show-details: always
       show-components: always
+
+logging:
+  level:
+    com.example.payment: DEBUG

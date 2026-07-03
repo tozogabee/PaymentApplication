@@ -1,0 +1,35 @@
+meta {
+  name: Create Duplicate
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 33.0,
+    "currency": "EUR",
+    "debtorAccount": "BRU-DUP-DEBTOR",
+    "creditorAccount": "BRU-DUP-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq FAILED
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setVar("dupSecondId", res.getBody().id);
+  }
+}

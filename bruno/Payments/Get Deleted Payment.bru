@@ -1,0 +1,14 @@
+meta {
+  name: Get Deleted Payment
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  auth: none
+}
+
+assert {
+  res.status: eq 404
+}

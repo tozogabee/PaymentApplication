@@ -9,7 +9,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 import com.example.payment.TestcontainersConfiguration;
+import com.example.payment.api.model.PaymentStatus;
+import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
+import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -57,7 +60,7 @@ class PaymentIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id));
 
-        // update
+        // update: CREATED -> COMPLETED
         mockMvc.perform(put("/payments/{id}", id)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -66,7 +69,21 @@ class PaymentIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.amount").value(150.0))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.modifiedBy").value("system"));
+
+        // update again: already COMPLETED -> rejected
+        mockMvc.perform(put("/payments/{id}", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":200.0,"currency":"EUR",
+                                 "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Payment is failed"))
+                .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
+                .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
 
         // list
         String listBody = mockMvc.perform(get("/payments"))
@@ -84,6 +101,51 @@ class PaymentIntegrationTest {
                 .andExpect(status().isNotFound());
 
         assertThat(repository.count()).isZero();
+    }
+
+    @Test
+    void updateFailedPaymentIsRejected() throws Exception {
+        Payment failed = repository.save(Payment.builder()
+                .amount(new BigDecimal("50.00"))
+                .currency("EUR")
+                .debtorAccount("DE123456789")
+                .creditorAccount("DE987654321")
+                .status(PaymentStatus.FAILED)
+                .build());
+
+        mockMvc.perform(put("/payments/{id}", failed.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":150.0,"currency":"EUR",
+                                 "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Payment is failed"))
+                .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
+                .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
+                .andExpect(jsonPath("$.status").value("FAILED"));
+    }
+
+    @Test
+    void duplicatePaymentIsMarkedFailed() throws Exception {
+        String body = """
+                {"amount":77.0,"currency":"EUR",
+                 "debtorAccount":"DUP-DEBTOR","creditorAccount":"DUP-CREDITOR"}
+                """;
+
+        // first payment for this debtor/creditor/amount/currency -> CREATED
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CREATED"));
+
+        // identical payment -> FAILED
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("FAILED"));
     }
 
     @Test
