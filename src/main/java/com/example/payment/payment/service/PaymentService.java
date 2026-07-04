@@ -87,8 +87,11 @@ public class PaymentService {
         payment.setDebtorAccount(debtorAccount);
         payment.setCreditorAccount(creditorAccount);
         payment.setStatus(PaymentStatus.COMPLETED);
+        // Flush now so the optimistic-lock (@Version) check runs here: a concurrent update to the
+        // same row throws ObjectOptimisticLockingFailureException instead of silently overwriting.
+        Payment updated = this.repository.saveAndFlush(payment);
         log.info("Updated payment id={} - status transitioned to COMPLETED", id);
-        return payment;
+        return updated;
     }
 
     @Transactional

@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -117,6 +118,21 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
                 .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    void concurrentUpdateConflictReturns409() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.update(eq(id), any(), any(), any(), any()))
+                .thenThrow(new ObjectOptimisticLockingFailureException(Payment.class, id));
+
+        mockMvc.perform(put("/payments/{id}", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":150.0,"currency":"EUR",
+                                 "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
+                                """))
+                .andExpect(status().isConflict());
     }
 
     @Test

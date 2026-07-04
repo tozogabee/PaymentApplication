@@ -11,6 +11,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -55,6 +56,12 @@ public class Payment {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PaymentStatus status;
+
+    // Optimistic-locking version: Hibernate checks and increments it on every update, so two
+    // concurrent updates to the same payment cannot silently overwrite each other (lost update).
+    @Version
+    @Column(nullable = false)
+    private long version;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
