@@ -9,7 +9,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
@@ -78,11 +77,4 @@ public class Payment {
     @LastModifiedBy
     @Column(name = "modified_by")
     private String modifiedBy;
-
-    @PrePersist
-    void prePersist() {
-        if (status == null) {
-            status = PaymentStatus.CREATED;
-        }
-    }
 }
