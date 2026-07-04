@@ -63,8 +63,9 @@ Explicit HikariCP sizing.
 
 ## Trade-offs worth calling out
 
-- **Migrations are immutable:** each schema change is a new `Vn__*.sql`; applied migrations are never
-  edited (avoids Flyway checksum drift).
+- **Migrations:** the initial schema baseline (including the `version` column) lives in `V1`;
+  changes made after a release go in new `Vn__*.sql` files rather than editing an applied migration
+  (avoids Flyway checksum drift).
 - **Optimistic vs pessimistic locking:** optimistic (`@Version`) chosen because update conflicts on a
   single payment are rare — no locks held, cheaper. Pessimistic would suit high-contention rows.
 - **Duplicate detection semantics** are a pragmatic interpretation of "basic status handling," not a
