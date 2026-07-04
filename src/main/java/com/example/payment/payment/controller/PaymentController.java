@@ -6,7 +6,6 @@ import com.example.payment.api.model.PaymentRequest;
 import com.example.payment.api.model.PaymentResponse;
 import com.example.payment.payment.mapper.PaymentMapper;
 import com.example.payment.payment.model.Payment;
-import com.example.payment.payment.service.PaymentCreationResult;
 import com.example.payment.payment.service.PaymentService;
 import java.util.List;
 import java.util.UUID;
@@ -27,14 +26,12 @@ public class PaymentController implements PaymentsApi {
     @Override
     public ResponseEntity<PaymentResponse> createPayment(PaymentRequest request) {
         log.info("POST /payments - debtor={} creditor={}", request.getDebtorAccount(), request.getCreditorAccount());
-        PaymentCreationResult result = service.create(
+        Payment created = service.create(
                 request.getAmount(),
                 request.getCurrency(),
                 request.getDebtorAccount(),
                 request.getCreditorAccount());
-        // 201 when a new payment is persisted; 200 when an existing FAILED duplicate is returned
-        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
-        return ResponseEntity.status(status).body(paymentMapper.toResponse(result.payment()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(paymentMapper.toResponse(created));
     }
 
     @Override

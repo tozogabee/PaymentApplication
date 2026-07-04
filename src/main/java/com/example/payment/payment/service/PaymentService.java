@@ -1,6 +1,7 @@
 package com.example.payment.payment.service;
 
 import com.example.payment.api.model.PaymentStatus;
+import com.example.payment.payment.exception.DuplicatePaymentException;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.exception.PaymentNotUpdatableException;
 import com.example.payment.payment.model.Payment;
@@ -22,38 +23,28 @@ public class PaymentService {
     private final PaymentRepository repository;
 
     @Transactional
-    public PaymentCreationResult create(BigDecimal amount, String currency, String debtorAccount,
-            String creditorAccount) {
+    public Payment create(BigDecimal amount, String currency, String debtorAccount, String creditorAccount) {
         String normalizedCurrency = currency.toUpperCase();
 
-        boolean duplicate = repository.existsByDebtorAccountAndCreditorAccountAndAmountAndCurrency(
+        Optional<Payment> existing = repository.findFirstByDebtorAccountAndCreditorAccountAndAmountAndCurrency(
                 debtorAccount, creditorAccount, amount, normalizedCurrency);
-
-        Optional<Payment> existingFailed =
-                repository.findFirstByDebtorAccountAndCreditorAccountAndAmountAndCurrencyAndStatus(
-                        debtorAccount, creditorAccount, amount, normalizedCurrency, PaymentStatus.FAILED);
-        if (existingFailed.isPresent()) {
-            log.error("A FAILED payment already exists (debtor={}, creditor={}, amount={} {}) "
-                            + "- ignoring new create, nothing persisted",
-                    debtorAccount, creditorAccount, amount, normalizedCurrency);
-            return new PaymentCreationResult(existingFailed.get(), false);
+        if (existing.isPresent()) {
+            log.warn("Duplicate payment rejected (debtor={}, creditor={}, amount={} {}) - existing id={}",
+                    debtorAccount, creditorAccount, amount, normalizedCurrency, existing.get().getId());
+            throw new DuplicatePaymentException(existing.get().getId(), debtorAccount, creditorAccount);
         }
 
-        if (duplicate) {
-            log.error("Duplicate payment detected (debtor={}, creditor={}, amount={} {}) - marking as FAILED",
-                    debtorAccount, creditorAccount, amount, normalizedCurrency);
-        }
         Payment payment = Payment.builder()
                 .amount(amount)
                 .currency(normalizedCurrency)
                 .debtorAccount(debtorAccount)
                 .creditorAccount(creditorAccount)
-                .status(duplicate ? PaymentStatus.FAILED : PaymentStatus.CREATED)
+                .status(PaymentStatus.CREATED)
                 .build();
         Payment saved = repository.save(payment);
         log.info("Created payment id={} status={} amount={} {}",
                 saved.getId(), saved.getStatus(), saved.getAmount(), saved.getCurrency());
-        return new PaymentCreationResult(saved, true);
+        return saved;
     }
 
     @Transactional(readOnly = true)

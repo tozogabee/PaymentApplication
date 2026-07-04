@@ -24,12 +24,11 @@ body:json {
 }
 
 assert {
-  res.status: eq 201
-  res.body.status: eq FAILED
+  res.status: eq 409
+  res.body.existingPaymentId: eq {{dupFirstId}}
 }
 
-script:post-response {
-  if (res.getStatus() === 201) {
-    bru.setVar("dupSecondId", res.getBody().id);
-  }
+docs {
+  An identical payment already exists, so this duplicate create is rejected with 409 Conflict.
+  Nothing is persisted; the response points at the existing payment (id from "Create First").
 }

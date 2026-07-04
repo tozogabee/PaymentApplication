@@ -13,6 +13,7 @@ import com.example.payment.api.model.PaymentStatus;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
 import java.math.BigDecimal;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -36,6 +37,11 @@ class PaymentIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @BeforeEach
+    void clearPayments() {
+        repository.deleteAll();   // isolate tests: assertions on the full list must not see other tests' data
+    }
 
     @Test
     void fullPaymentLifecycleAgainstPostgres() throws Exception {
@@ -127,61 +133,32 @@ class PaymentIntegrationTest {
     }
 
     @Test
-    void duplicatePaymentIsMarkedFailed() throws Exception {
+    void duplicateCreateIsRejectedWith409AndPersistsNothingNew() throws Exception {
         String body = """
                 {"amount":77.0,"currency":"EUR",
                  "debtorAccount":"DUP-DEBTOR","creditorAccount":"DUP-CREDITOR"}
                 """;
 
-        // first payment for this debtor/creditor/amount/currency -> CREATED
-        mockMvc.perform(post("/payments")
+        // first payment for this debtor/creditor/amount/currency -> CREATED (201)
+        String firstBody = mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("CREATED"));
-
-        // identical payment -> FAILED
-        mockMvc.perform(post("/payments")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("FAILED"));
-    }
-
-    @Test
-    void createDuplicateOfFailedPaymentIsIgnored() throws Exception {
-        String body = """
-                {"amount":88.0,"currency":"EUR",
-                 "debtorAccount":"IGN-DEBTOR","creditorAccount":"IGN-CREDITOR"}
-                """;
-
-        // #1 -> CREATED
-        mockMvc.perform(post("/payments")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("CREATED"));
-
-        // #2 -> duplicate, persisted as FAILED
-        String failedBody = mockMvc.perform(post("/payments")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.status").value("CREATED"))
                 .andReturn().getResponse().getContentAsString();
-        String failedId = objectMapper.readTree(failedBody).get("id").asString();
+        String firstId = objectMapper.readTree(firstBody).get("id").asString();
 
-        long countAfterFailed = repository.count();
+        long countAfterFirst = repository.count();
 
-        // #3 -> a FAILED already exists, so this is ignored (nothing persisted, 200) and returns it
+        // identical payment -> rejected with 409 Conflict, pointing at the existing payment, and
+        // nothing new is persisted.
         mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("FAILED"))
-                .andExpect(jsonPath("$.id").value(failedId));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existingPaymentId").value(firstId));
 
-        assertThat(repository.count()).isEqualTo(countAfterFailed);
+        assertThat(repository.count()).isEqualTo(countAfterFirst);
     }
 
     @Test

@@ -21,7 +21,7 @@ rather than built into the submission — knowing what **not** to build is part 
 | Startup | `docker compose up --build` | one command builds the image and starts DB + app |
 | Validation | Bean Validation on the generated request DTO (`amount > 0`, required fields) | the task's rules |
 | Status handling | backend sets `CREATED`; updates only allowed from `CREATED` → `409` otherwise | "prevent invalid updates" |
-| Duplicate handling | identical in-flight payment recorded as `FAILED` | simple, realistic business rule |
+| Duplicate handling | identical payment rejected with `409 Conflict`, nothing persisted | clean REST semantics; `FAILED` stays a genuine failure state |
 | **Optimistic locking** | `@Version` on `Payment`; concurrent update → `409` | ~a few lines; directly hardens "prevent invalid updates" under concurrency. The one production touch kept in-tree. |
 | Error handling | `@RestControllerAdvice` → RFC-7807 `ProblemDetail` | meaningful, consistent responses |
 | Tests | JUnit 5, MockMvc, Testcontainers (Postgres) + Bruno API collection | covers the functional requirements |
@@ -46,10 +46,11 @@ instead of creating a second payment — with a stored response snapshot and sch
   CRUD demo, and a large amount of infrastructure for an unstated requirement.
 
 ### 3. Concurrency-safe deduplication
-A partial unique index (`WHERE status = 'CREATED'`) plus an isolated-attempt + retry pattern so the
-"duplicate → FAILED" rule holds even under simultaneous requests.
+The in-tree duplicate check is check-then-insert, which can race under two simultaneous identical
+requests. A partial unique index (`WHERE status = 'CREATED'`) plus an isolated-attempt + retry
+pattern makes the `409` rejection atomic even then.
 - **When it's worth it:** when duplicate creates can genuinely race in production. The in-tree
-  version keeps the rule simple; the branch shows the race-proof version.
+  version keeps it simple; the branch shows the race-proof version.
 
 ### 4. Deployment (Kubernetes)
 Deployment/Service/HPA/Ingress manifests for local and prod.
@@ -61,6 +62,24 @@ Explicit HikariCP sizing.
 - **When it's worth it:** under real load, sized against Postgres `max_connections` and replica
   count. Defaults are fine for the demo.
 
+### 6. Payment processing (making `FAILED` a real outcome)
+Today `FAILED` is a supported terminal state that the API guards (a `FAILED` payment can't be
+updated → `409`), but no endpoint *produces* it — a pure CRUD service has no genuine failure
+trigger, and inventing an arbitrary rule (e.g. "amount > X fails") would be neither simple nor
+realistic. The clean way to make `FAILED` reachable is a **payment gateway port**:
+
+```java
+interface PaymentGateway { PaymentOutcome process(Payment p); }   // APPROVED | DECLINED
+```
+
+A `MockPaymentGateway` adapter would stand in for a bank/PSP; processing a `CREATED` payment
+(via `PUT` or a dedicated `POST /payments/{id}/process`) would call it and transition to
+`COMPLETED` (approved) or `FAILED` (declined). It's deterministically testable by mocking the
+gateway.
+- **When it's worth it:** when the service actually settles payments. Left out here because it
+  reinterprets `PUT` as a processing step and adds an adapter — more than *"simple but realistic"*
+  asks for, given the statuses are specified only as examples ("e.g. CREATED, COMPLETED, FAILED").
+
 ## Trade-offs worth calling out
 
 - **Migrations:** the initial schema baseline (including the `version` column) lives in `V1`;
@@ -68,5 +87,6 @@ Explicit HikariCP sizing.
   (avoids Flyway checksum drift).
 - **Optimistic vs pessimistic locking:** optimistic (`@Version`) chosen because update conflicts on a
   single payment are rare — no locks held, cheaper. Pessimistic would suit high-contention rows.
-- **Duplicate detection semantics** are a pragmatic interpretation of "basic status handling," not a
-  spec requirement; kept intentionally simple.
+- **Duplicate detection** returns `409 Conflict` rather than inventing a status for it, so `FAILED`
+  keeps its real meaning (a payment that could not be completed). This isn't a spec requirement;
+  it's kept intentionally simple.

@@ -24,13 +24,11 @@ body:json {
 }
 
 assert {
-  res.status: eq 200
-  res.body.status: eq FAILED
-  res.body.id: eq {{dupSecondId}}
+  res.status: eq 409
+  res.body.existingPaymentId: eq {{dupFirstId}}
 }
 
 docs {
-  A FAILED payment already exists for this debtor/creditor/amount/currency, so this
-  create is ignored (nothing persisted) and the existing FAILED payment is returned
-  (same id as the previous "Create Duplicate" request).
+  Duplicate handling is stable across repeats: a third identical create is again rejected with
+  409 Conflict, still pointing at the existing payment (id from "Create First") and persisting nothing.
 }

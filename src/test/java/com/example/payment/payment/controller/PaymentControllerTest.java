@@ -11,12 +11,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.example.payment.payment.exception.DuplicatePaymentException;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.exception.PaymentNotUpdatableException;
 import com.example.payment.payment.mapper.PaymentMapperImpl;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.api.model.PaymentStatus;
-import com.example.payment.payment.service.PaymentCreationResult;
 import com.example.payment.payment.service.PaymentService;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -57,7 +57,7 @@ class PaymentControllerTest {
     void createPaymentReturns201() throws Exception {
         UUID id = UUID.randomUUID();
         when(service.create(any(), any(), any(), any()))
-                .thenReturn(new PaymentCreationResult(samplePayment(id), true));
+                .thenReturn(samplePayment(id));
 
         mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -74,10 +74,10 @@ class PaymentControllerTest {
     }
 
     @Test
-    void createIgnoredDuplicateReturns200() throws Exception {
-        UUID id = UUID.randomUUID();
+    void createDuplicatePaymentReturns409() throws Exception {
+        UUID existingId = UUID.randomUUID();
         when(service.create(any(), any(), any(), any()))
-                .thenReturn(new PaymentCreationResult(samplePayment(id), false));
+                .thenThrow(new DuplicatePaymentException(existingId, "DE123456789", "DE987654321"));
 
         mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -85,8 +85,8 @@ class PaymentControllerTest {
                                 {"amount":100.0,"currency":"EUR",
                                  "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
                                 """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id.toString()));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existingPaymentId").value(existingId.toString()));
     }
 
     @Test

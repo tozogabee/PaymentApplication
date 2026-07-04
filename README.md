@@ -52,7 +52,7 @@ A **Payment** has the following fields:
 | `currency`         | String (3 chars)  | ISO 4217 code, normalized to upper case (e.g. `EUR`) |
 | `debtorAccount`    | String            | Required                                         |
 | `creditorAccount`  | String            | Required                                         |
-| `status`           | enum              | `CREATED`, `COMPLETED`, `FAILED` (new payments start as `CREATED`, or `FAILED` if a duplicate) |
+| `status`           | enum              | `CREATED`, `COMPLETED`, `FAILED` (new payments start as `CREATED`) |
 | `createdAt`        | timestamp         | Set automatically (JPA auditing)                 |
 | `createdBy`        | String            | Set automatically (JPA auditing)                 |
 | `modifiedAt`       | timestamp         | Set automatically (JPA auditing)                 |
@@ -116,9 +116,8 @@ A new payment is a **duplicate** when its `debtorAccount`, `creditorAccount`, `a
 `currency` all match an existing payment. Handling:
 
 - **No match** → created with status `CREATED` (`201 Created`).
-- **Match exists, none `FAILED`** → created with status `FAILED` (`201 Created`).
-- **A `FAILED` match already exists** → the request is **ignored** (nothing is persisted); the
-  existing `FAILED` payment is returned with **`200 OK`** (not `201`, since nothing was created).
+- **Match exists** → rejected with **`409 Conflict`**; nothing is persisted. The response body
+  includes `existingPaymentId` pointing at the payment that already exists.
 
 ### Example — delete a payment
 
@@ -382,8 +381,8 @@ health endpoint:
 - `Health/` — actuator health check
 - `Payments/` — full lifecycle (create → get → list → update to `COMPLETED` → reject re-update
   `409` → delete → verify deleted)
-- `Duplicate/` — creates the same payment (`CREATED` → `FAILED` → ignored third create returns the
-  existing `FAILED`) and deletes the persisted rows (self-cleaning, so it stays repeatable)
+- `Duplicate/` — creates a payment, then submits the same payment twice more and asserts each is
+  rejected with `409 Conflict`, before deleting the created row (self-cleaning, so it stays repeatable)
 - `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
   malformed JSON, invalid UUID) and `404`s (get/update/delete unknown id)
 

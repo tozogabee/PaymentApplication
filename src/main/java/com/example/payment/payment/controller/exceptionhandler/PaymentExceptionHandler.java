@@ -1,5 +1,6 @@
 package com.example.payment.payment.controller.exceptionhandler;
 
+import com.example.payment.payment.exception.DuplicatePaymentException;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.exception.PaymentNotUpdatableException;
 import java.util.stream.Collectors;
@@ -33,6 +34,14 @@ public class PaymentExceptionHandler extends ResponseEntityExceptionHandler {
         log.warn("Payment update conflict: status={} debtor={} creditor={}",
                 ex.getStatus(), ex.getDebtorAccount(), ex.getCreditorAccount());
         return ex;
+    }
+
+    @ExceptionHandler(DuplicatePaymentException.class)
+    public ProblemDetail handleDuplicate(DuplicatePaymentException ex) {
+        log.warn("Duplicate payment rejected: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setProperty("existingPaymentId", ex.getExistingPaymentId());
+        return problem;
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
