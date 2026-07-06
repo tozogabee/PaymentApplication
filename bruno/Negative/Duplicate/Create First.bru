@@ -18,7 +18,7 @@ body:json {
   {
     "amount": 33.0,
     "currency": "EUR",
-    "debtorAccount": "BRU-DUP-DEBTOR",
+    "debtorAccount": "{{dupDebtor}}",
     "creditorAccount": "BRU-DUP-CREDITOR"
   }
 }
@@ -26,6 +26,11 @@ body:json {
 assert {
   res.status: eq 201
   res.body.status: eq CREATED
+}
+
+script:pre-request {
+  // Unique debtor per run so a leftover row from an interrupted run can't collide on re-run.
+  bru.setVar("dupDebtor", "BRU-DUP-" + Date.now());
 }
 
 script:post-response {

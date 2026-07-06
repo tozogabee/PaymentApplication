@@ -608,10 +608,10 @@ cases, and the health endpoint.
 - `Health/` — actuator health check
 - `Payments/` — full lifecycle: create → get → list → update to `COMPLETED` → reject re-update `409`
   → reject delete-of-completed `409` → create a fresh payment → delete it `200` → verify deleted
-- `Duplicate/` — creates a payment, then submits the same payment twice more and asserts each is
-  rejected with `409 Conflict`, before deleting the created row (self-cleaning, so it stays repeatable)
 - `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
   malformed JSON, invalid UUID) and `404`s (get/update/delete unknown id)
+  - `Negative/Duplicate/` — the **duplicate-create flow** (create → same payment rejected `409` twice
+    → clean up the created row)
 
 The collection uses the **`Local`** environment ([`bruno/environments/Local.bru`](bruno/environments/Local.bru)),
 which sets `baseUrl = http://localhost:8080`. **Start the app first** (see

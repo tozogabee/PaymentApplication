@@ -1,7 +1,7 @@
 meta {
-  name: Create Duplicate
+  name: Create Repeat
   type: http
-  seq: 2
+  seq: 3
 }
 
 post {
@@ -18,7 +18,7 @@ body:json {
   {
     "amount": 33.0,
     "currency": "EUR",
-    "debtorAccount": "BRU-DUP-DEBTOR",
+    "debtorAccount": "{{dupDebtor}}",
     "creditorAccount": "BRU-DUP-CREDITOR"
   }
 }
@@ -29,6 +29,6 @@ assert {
 }
 
 docs {
-  An identical payment already exists, so this duplicate create is rejected with 409 Conflict.
-  Nothing is persisted; the response points at the existing payment (id from "Create First").
+  Duplicate handling is stable across repeats: a third identical create is again rejected with
+  409 Conflict, still pointing at the existing payment (id from "Create First") and persisting nothing.
 }
