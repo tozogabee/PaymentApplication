@@ -1,92 +1,143 @@
-# Design notes
+# Design decisions
 
-## Scope & philosophy
+A step-by-step walk through the decisions in this codebase and **why** each was made. The guiding
+constraint from the task is *"keep the solution simple and focused"* (senior effort 3–5h; no auth,
+frontend, cloud, or pagination), so every decision is weighed against that.
 
-The task asks for a **small, pragmatic** payment CRUD microservice and explicitly says
-*"keep the solution simple and focused"* (senior effort: 3–5h; no auth, no frontend, no cloud, no
-pagination). This submission is scoped to exactly that: the five CRUD endpoints, input validation,
-backend-managed status, invalid-update prevention, containerised startup, tests, and docs — nothing
-that isn't needed to satisfy the brief cleanly.
+---
 
-Where a lightweight, high-value production touch was cheap and directly supported a stated
-requirement, it was included. Everything heavier is documented below as a deliberate *extension*
-rather than built into the submission — knowing what **not** to build is part of the job.
+## 1. Contract-first API (OpenAPI)
 
-## What's in the submission (and why)
+**Decision.** The API is defined in [`openapi/payment-api.yaml`](src/main/resources/openapi/payment-api.yaml);
+the request/response DTOs and the `PaymentsApi` interface are **generated at build time**, and
+`PaymentController` implements that generated interface.
 
-| Area | Choice | Rationale |
-|---|---|---|
-| API | OpenAPI-first; interfaces/DTOs generated at build | single source of truth, validation from the spec |
-| Persistence | PostgreSQL in a container (+ H2 for the test profile) | realistic; Flyway-managed schema |
-| Startup | `docker compose up --build` | one command builds the image and starts DB + app |
-| Validation | Bean Validation on the generated request DTO (`amount > 0`, required fields) | the task's rules |
-| Status handling | backend sets `CREATED`; updates only allowed from `CREATED` → `409` otherwise | "prevent invalid updates" |
-| Duplicate handling | identical payment rejected with `409 Conflict`, nothing persisted | clean REST semantics; `FAILED` stays a genuine failure state |
-| **Optimistic locking** | `@Version` on `Payment`; concurrent update → `409` | ~a few lines; directly hardens "prevent invalid updates" under concurrency. The one production touch kept in-tree. |
-| Error handling | `@RestControllerAdvice` → RFC-7807 `ProblemDetail` | meaningful, consistent responses |
-| Tests | JUnit 5, MockMvc, Testcontainers (Postgres) + Bruno API collection | covers the functional requirements |
+**Why.** One source of truth. The spec drives the Java types, the request validation, and the Swagger
+UI, so documentation and code cannot drift. Changing the API becomes a deliberate edit to the
+contract, which a reviewer can diff.
 
-## Deliberately-left-out extensions
+## 2. Layered architecture with a DTO boundary
 
-These were implemented on a separate branch (`feature/production-extensions`) to demonstrate the
-production landscape, but are **intentionally excluded from the submission** because they exceed the
-"simple and focused" brief. Each note is *when I would actually add it*.
+**Decision.** `Controller → Service → Repository`, plus a MapStruct `PaymentMapper` that converts the
+`Payment` entity to the response DTO.
 
-### 1. Distributed caching (Redis)
-`@Cacheable`/`@CachePut`/`@CacheEvict` over `GET /payments/{id}`, backed by a shared Redis so all
-replicas stay consistent.
-- **When it's worth it:** read-heavy load where the DB becomes the bottleneck, or expensive
-  read queries. For single-row PK lookups at this scale it adds a dependency and a staleness risk
-  for **no measurable gain** — so it's out.
+**Why.** Separation of concerns and testability: the web layer, business logic, and persistence are
+each testable in isolation. The JPA entity is never serialized over the wire — the API contract is
+independent of the database schema, so persistence changes don't leak to clients.
 
-### 2. Idempotency keys
-An `Idempotency-Key` header so a retried `POST` (after a lost response) replays the original result
-instead of creating a second payment — with a stored response snapshot and scheduled key expiry.
-- **When it's worth it:** any real money-moving API. Mandatory at production scale; overkill for a
-  CRUD demo, and a large amount of infrastructure for an unstated requirement.
+## 3. Persistence: PostgreSQL + Flyway, explicit entity design
 
-### 3. Concurrency-safe deduplication
-The in-tree duplicate check is check-then-insert, which can race under two simultaneous identical
-requests. A partial unique index (`WHERE status = 'CREATED'`) plus an isolated-attempt + retry
-pattern makes the `409` rejection atomic even then.
-- **When it's worth it:** when duplicate creates can genuinely race in production. The in-tree
-  version keeps it simple; the branch shows the race-proof version.
+**Decision.** PostgreSQL (H2 only for the `test` profile), schema owned by **Flyway** migrations, and
+Hibernate `ddl-auto` set to `none`/`validate` (never `update`). Entity: `UUID` id, `BigDecimal`
+amount, `String`-length-limited fields, enum `status`.
 
-### 4. Deployment (Kubernetes)
-Deployment/Service/HPA/Ingress manifests for local and prod.
-- **When it's worth it:** actual cluster deployment. The task says *no cloud deployment required*, so
-  it's out of the submission.
+**Why.**
+- Flyway gives a **versioned, reviewable, reproducible** schema; Hibernate validating (not
+  generating) DDL means the schema never changes by surprise.
+- `UUID` id: safe to expose, needs no central sequence, generated on insert.
+- `BigDecimal` amount: money must be exact — floating point is not.
 
-### 5. Connection-pool tuning
-Explicit HikariCP sizing.
-- **When it's worth it:** under real load, sized against Postgres `max_connections` and replica
-  count. Defaults are fine for the demo.
+## 4. Status is backend-managed
 
-### 6. Payment processing (making `FAILED` a real outcome)
-Today `FAILED` is a supported terminal state that the API guards (a `FAILED` payment can't be
-updated → `409`), but no endpoint *produces* it — a pure CRUD service has no genuine failure
-trigger, and inventing an arbitrary rule (e.g. "amount > X fails") would be neither simple nor
-realistic. The clean way to make `FAILED` reachable is a **payment gateway port**:
+**Decision.** `PaymentRequest` has **no `status` field**; `PaymentService.create` always sets
+`CREATED`.
 
-```java
-interface PaymentGateway { PaymentOutcome process(Payment p); }   // APPROVED | DECLINED
-```
+**Why.** The task rules: *"status is managed by the backend"* and *"new payment status should be
+CREATED."* A client cannot inject a status.
 
-A `MockPaymentGateway` adapter would stand in for a bank/PSP; processing a `CREATED` payment
-(via `PUT` or a dedicated `POST /payments/{id}/process`) would call it and transition to
-`COMPLETED` (approved) or `FAILED` (declined). It's deterministically testable by mocking the
-gateway.
-- **When it's worth it:** when the service actually settles payments. Left out here because it
-  reinterprets `PUT` as a processing step and adds an adapter — more than *"simple but realistic"*
-  asks for, given the statuses are specified only as examples ("e.g. CREATED, COMPLETED, FAILED").
+## 5. Validation declared in the contract
 
-## Trade-offs worth calling out
+**Decision.** Bean Validation on the generated request DTO — `amount` `minimum: 0, exclusiveMinimum`,
+`currency` exactly 3 chars, debtor/creditor non-blank — enforced automatically → `400 Bad Request`.
 
-- **Migrations:** the initial schema baseline (including the `version` column) lives in `V1`;
-  changes made after a release go in new `Vn__*.sql` files rather than editing an applied migration
-  (avoids Flyway checksum drift).
-- **Optimistic vs pessimistic locking:** optimistic (`@Version`) chosen because update conflicts on a
-  single payment are rare — no locks held, cheaper. Pessimistic would suit high-contention rows.
-- **Duplicate detection** returns `409 Conflict` rather than inventing a status for it, so `FAILED`
-  keeps its real meaning (a payment that could not be completed). This isn't a spec requirement;
-  it's kept intentionally simple.
+**Why.** The task rules *"amount must be > 0"* and *"validate input data."* Declaring it in the OpenAPI
+schema keeps validation in the same single source of truth (decision 1), rather than hand-written
+`if` checks.
+
+## 6. Update is a status state machine
+
+**Decision.** Only a `CREATED` payment can be updated (and doing so transitions it to `COMPLETED`);
+updating a `COMPLETED` or `FAILED` payment is rejected with `409 Conflict`.
+
+**Why.** The task's *"prevent invalid updates (e.g. modifying a completed payment)."* Terminal states
+stay terminal, so the lifecycle can't be corrupted.
+
+## 7. Duplicate create → `409 Conflict`, not a `FAILED` record
+
+**Decision.** A create whose debtor/creditor/amount/currency matches an existing payment is rejected
+with `409` (body carries `existingPaymentId`); **nothing is persisted**. See
+`DuplicatePaymentException` + `PaymentExceptionHandler`.
+
+**Why.** A duplicate submission is a *conflict*, not a *failed payment*. Recording it as `FAILED`
+would overload the status, pollute the table with rows per retry, and rob `FAILED` of its real
+meaning ("the payment could not be completed"). `409` states exactly what happened. (Duplicate
+detection itself is beyond the spec, so it's kept to a single query.)
+
+## 8. Optimistic locking on updates
+
+**Decision.** `Payment` has a `@Version` column; `update` calls `saveAndFlush`; a concurrent-update
+conflict throws `ObjectOptimisticLockingFailureException`, mapped to `409`.
+
+**Why.** Prevents **lost updates**: if two requests update the same payment at once, exactly one wins
+and the other gets `409` — for only a few lines of code, this hardens the spec's "prevent invalid
+updates" under real traffic.
+- **Optimistic, not pessimistic:** conflicts on a single payment are rare, so it's cheaper to detect
+  a clash at write time than to hold a row lock.
+- **`saveAndFlush`:** forces the version check to run *inside* the method so the failure surfaces
+  cleanly as `409`, rather than being deferred to transaction commit.
+
+## 9. Centralised, standard error handling
+
+**Decision.** A single `@RestControllerAdvice` maps exceptions to **RFC-7807 `application/problem+json`**:
+`400` (validation / malformed / bad UUID), `404` (not found), `409` (duplicate / invalid update /
+concurrent update), `500` (fallback).
+
+**Why.** Consistent, machine-readable errors defined in one place; controllers and services stay free
+of error-formatting code.
+
+## 10. Auditing built in
+
+**Decision.** JPA auditing populates `createdAt/createdBy/modifiedAt/modifiedBy`; the auditor comes
+from an `AuditorAware<String>` bean (currently `"system"`).
+
+**Why.** A cheap, always-on audit trail. When authentication is added, only the `AuditorAware` bean
+changes — it returns the authenticated principal, and every row is attributed automatically.
+
+## 11. Containerised DB + one-command startup
+
+**Decision.** A multi-stage `Dockerfile` (Maven build → slim JRE) and a `docker-compose.yaml`
+(app + PostgreSQL) so `docker compose up --build` builds the image and starts everything.
+
+**Why.** The task's persistence option "database in a container" plus its requirement that a single
+command builds the image and starts all containers ready to use.
+
+## 12. Layered testing strategy
+
+**Decision.**
+- `PaymentControllerTest` — `@WebMvcTest` slice, service mocked: status-code/mapping behaviour
+  (`201`, `400`, `404`, `409` ×3, `500`).
+- `PaymentIntegrationTest` — `@SpringBootTest` against a **Testcontainers PostgreSQL**, running the
+  real Flyway migrations: full lifecycle, duplicate `409`, invalid-update `409`, and a **deterministic
+  optimistic-locking** conflict.
+- `PaymentMapperTest`, `PaymentApplicationTests`, the **Bruno** HTTP collection, and
+  `scripts/concurrency-check.sh`. A JaCoCo gate enforces **80% line coverage**.
+
+**Why.** Each layer is tested with the cheapest tool that's still meaningful: fast slices for wiring,
+real-DB integration for behaviour (Testcontainers over H2 so we test the **actual engine** used in
+production), black-box HTTP for the contract, and a parallel-load check for the concurrency invariant.
+
+## 13. Concurrency: what's guaranteed, and how it's verified
+
+**Decision.**
+- **Updates** are protected by optimistic locking (decision 8) — safe against lost updates.
+- **Identical creates** use a best-effort *check-then-insert*, which can race under two simultaneous
+  requests; this is accepted as a simplification (duplicate detection is not a spec requirement).
+- Verified by `PaymentIntegrationTest#staleUpdateIsRejectedByOptimisticLocking` and, on the running
+  stack, by [`scripts/concurrency-check.sh`](scripts/concurrency-check.sh) (Scenario 1 asserts the
+  update invariant; Scenario 2 demonstrates the create race). CI runs the script; only the
+  deterministic Scenario 1 governs the exit code.
+
+**Why.** Make the guarantee that matters for correctness (no lost updates) rock-solid and tested,
+while being explicit that the non-required race is intentionally left simple. A race-proof version
+would use a partial unique index (`WHERE status = 'CREATED'`) plus an isolated-attempt + retry, but
+that's more machinery than the "simple and focused" brief warrants for a non-required feature.

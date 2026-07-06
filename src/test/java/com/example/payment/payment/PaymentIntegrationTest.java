@@ -1,6 +1,7 @@
 package com.example.payment.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -13,6 +14,7 @@ import com.example.payment.api.model.PaymentStatus;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
 import java.math.BigDecimal;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +22,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -165,5 +168,33 @@ class PaymentIntegrationTest {
     void deleteUnknownPaymentReturns404() throws Exception {
         mockMvc.perform(delete("/payments/{id}", "11111111-1111-1111-1111-111111111111"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void staleUpdateIsRejectedByOptimisticLocking() {
+        // Persist a payment, then read it twice as two independent (detached) copies at the same
+        // @Version. This is exactly what two concurrent requests would each hold.
+        UUID id = repository.saveAndFlush(Payment.builder()
+                .amount(new BigDecimal("10.00"))
+                .currency("EUR")
+                .debtorAccount("OPT-DEBTOR")
+                .creditorAccount("OPT-CREDITOR")
+                .status(PaymentStatus.CREATED)
+                .build()).getId();
+
+        Payment firstWriter = repository.findById(id).orElseThrow();
+        Payment secondWriter = repository.findById(id).orElseThrow();
+
+        // The first writer commits and bumps the version.
+        firstWriter.setAmount(new BigDecimal("20.00"));
+        repository.saveAndFlush(firstWriter);
+
+        // The second writer still holds the old version -> optimistic-lock conflict (no lost update).
+        secondWriter.setAmount(new BigDecimal("30.00"));
+        assertThatThrownBy(() -> repository.saveAndFlush(secondWriter))
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+
+        // The winning update stands; the losing one never applied.
+        assertThat(repository.findById(id).orElseThrow().getAmount()).isEqualByComparingTo("20.00");
     }
 }

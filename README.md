@@ -4,6 +4,8 @@ A Spring Boot service for managing payments, built **contract-first** with OpenA
 REST API to create, read, update, list, and delete payments, backed by PostgreSQL in production and
 H2 for local testing, with database schema managed by Flyway.
 
+> **Design notes / scope decisions:** see [`DESIGN.md`](DESIGN.md).
+
 ---
 
 ## Table of contents
@@ -14,12 +16,13 @@ H2 for local testing, with database schema managed by Flyway.
 - [Project layout](#project-layout)
 - [Configuration & profiles](#configuration--profiles)
 - [Building the project](#building-the-project)
-- [Running the application](#running-the-application)
-- [Running with Docker](#running-with-docker)
+- [Running the application (locally, step by step)](#running-the-application-locally-step-by-step)
+- [Running with Docker (whole stack, one command)](#running-with-docker-whole-stack-one-command)
 - [Database migrations (Flyway)](#database-migrations-flyway)
 - [Health & monitoring](#health--monitoring)
 - [Testing](#testing)
 - [Bruno API collection](#bruno-api-collection)
+- [Concurrency check](#concurrency-check)
 - [Continuous integration](#continuous-integration)
 
 ---
@@ -173,7 +176,11 @@ Errors are returned as RFC-9457 `application/problem+json`:
 - `400 Bad Request` — validation failure (e.g. negative amount, invalid currency), malformed JSON,
   or an invalid UUID path parameter.
 - `404 Not Found` — no payment exists for the given id.
-- `409 Conflict` — the payment cannot be updated because it is not in `CREATED` status.
+- `409 Conflict` — one of:
+  - **duplicate create** — a payment with the same debtor/creditor/amount/currency already exists
+    (body includes `existingPaymentId`);
+  - **invalid update** — the payment is not in `CREATED` status (already `COMPLETED`/`FAILED`);
+  - **concurrent update** — the payment was modified by another request (optimistic-locking conflict).
 
 ---
 
@@ -186,9 +193,9 @@ src/main/java/com/example/payment
 └── payment
     ├── controller/PaymentController.java   # implements generated PaymentsApi
     ├── controller/exceptionhandler/PaymentExceptionHandler.java
-    ├── exception/PaymentNotFoundException.java
+    ├── exception/                          # PaymentNotFound, PaymentNotUpdatable, DuplicatePayment
     ├── mapper/PaymentMapper.java           # entity -> generated response model
-    ├── model/Payment.java                  # JPA entity (with auditing)
+    ├── model/Payment.java                  # JPA entity (auditing + @Version optimistic locking)
     ├── model/PaymentRepository.java
     └── service/PaymentService.java
 
@@ -199,8 +206,10 @@ src/main/resources
 └── openapi/payment-api.yaml                # API contract
 
 bruno/                                      # Bruno API test collection
+scripts/concurrency-check.sh                # ad-hoc parallel-load / optimistic-locking check
 Dockerfile                                  # multi-stage image build
 docker-compose.yaml                         # app + PostgreSQL
+DESIGN.md                                    # design notes & scope decisions
 .github/workflows/ci.yml                    # CI pipeline
 ```
 
@@ -252,63 +261,146 @@ docker compose build          # builds the image via the multi-stage Dockerfile
 
 ---
 
-## Running the application
+## Running the application (locally, step by step)
+
+You can run the service two ways locally. **Path A** runs the Java app on your machine against a
+PostgreSQL container (closest to production). **Path B** needs no database or Docker at all (H2
+in-memory) — the fastest way to just try the API.
 
 ### Prerequisites
 
-- JDK 21
-- Docker (for PostgreSQL, Testcontainers, and container runs)
+```bash
+java -version      # must be 21.x
+docker info        # must succeed (only needed for Path A)
+```
+The Maven wrapper `./mvnw` is included, so you do **not** need a local Maven install.
 
-### Option A — default profile against PostgreSQL
+### Path A — app on your machine + PostgreSQL in Docker
 
-Start a PostgreSQL instance (via the provided compose file) and run the app:
+**Step 1 — start PostgreSQL only** (the `postgres` service from the compose file):
 
 ```bash
-docker compose up -d postgres          # start only the database
-./mvnw spring-boot:run                 # run the app (default profile)
+docker compose up -d postgres
 ```
 
-The app connects to `localhost:5432`, Flyway applies the migrations, and the API is available at
-`http://localhost:8080`.
+**Step 2 — wait until it is healthy** (should print `healthy`):
 
-### Option B — test profile against H2 (no database needed)
+```bash
+docker compose ps postgres
+```
 
-H2 and its console are only on the **test** classpath, so use the `test-run` goal:
+**Step 3 — run the application** (default profile → connects to `localhost:5432`):
+
+```bash
+./mvnw spring-boot:run
+```
+On startup Flyway applies the migrations and you should see a line like:
+`Started PaymentApplication in X.Xs`. The API is now at `http://localhost:8080`.
+
+**Step 4 — verify it works** (in another terminal):
+
+```bash
+# health
+curl http://localhost:8080/actuator/health          # -> {"status":"UP",...}
+
+# create a payment
+curl -X POST http://localhost:8080/payments \
+  -H 'Content-Type: application/json' \
+  -d '{"amount":100.0,"currency":"EUR","debtorAccount":"DE123456789","creditorAccount":"DE987654321"}'
+# -> 201 Created, body includes "id" and "status":"CREATED"
+
+# list payments
+curl http://localhost:8080/payments                  # -> [ ... ]
+```
+
+**Step 5 — stop**:
+
+```bash
+# stop the app: press Ctrl+C in the terminal running mvnw
+docker compose stop postgres        # stop the database (keeps data)
+# or: docker compose down -v         # stop and delete the database volume
+```
+
+### Path B — no database needed (H2 in-memory)
+
+H2 is only on the **test** classpath, so use the `test-run` goal with the `test` profile:
+
+**Step 1 — run:**
 
 ```bash
 ./mvnw spring-boot:test-run -Dspring-boot.run.profiles=test
 ```
 
-- API: `http://localhost:8080`
-- H2 console: `http://localhost:8080/h2-console`
-  (JDBC URL `jdbc:h2:mem:payment;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`, user `sa`, no password)
+**Step 2 — verify:**
 
-> In IntelliJ, run the Maven goal `spring-boot:test-run` with active profile `test` (a plain
-> Application run of `main()` uses the runtime classpath, where H2 is present via `runtime` scope).
+- API: `http://localhost:8080` (e.g. `curl http://localhost:8080/actuator/health`)
+- H2 console: `http://localhost:8080/h2-console`
+  (JDBC URL `jdbc:h2:mem:payment;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`, user `sa`, empty password)
+
+**Step 3 — stop:** press `Ctrl+C`. The in-memory database disappears with the process.
+
+> **IntelliJ:** run the Maven goal `spring-boot:test-run` with active profile `test`. A plain
+> `main()` run uses the runtime classpath where H2 is present via `runtime` scope, so that also works.
 
 ---
 
-## Running with Docker
+## Running with Docker (whole stack, one command)
 
-Build the image and start the whole stack (app + PostgreSQL):
+This builds the app image and starts **everything** (app + PostgreSQL) — this is the single-command
+startup the task asks for. Works with **Docker or Podman** (`podman compose ...`).
 
-```bash
-docker compose up -d --build
-```
-
-- The `app` service is built from the multi-stage [`Dockerfile`](Dockerfile) (Maven build → slim JRE).
-- It waits for PostgreSQL to be healthy, connects via the compose network
-  (`jdbc:postgresql://postgres:5432/payment`), and runs Flyway on startup.
-- API available at `http://localhost:8080`.
-
-Common commands:
+### Prerequisites
 
 ```bash
-docker compose ps                 # show container status/health
-docker compose logs -f app        # follow application logs
-docker compose down               # stop (keeps the data volume)
-docker compose down -v            # stop and delete the data volume
+docker info        # the Docker/Podman daemon must be running
 ```
+
+**Step 1 — build the image and start the stack, waiting for healthchecks:**
+
+```bash
+docker compose up -d --build --wait
+```
+What happens:
+1. the `app` image is built from the multi-stage [`Dockerfile`](Dockerfile) (Maven build → slim JRE);
+2. the `postgres` container starts and becomes healthy;
+3. the `app` container starts, waits for the DB, runs Flyway, and exposes the API on port `8080`.
+`--wait` makes the command return only once both containers report **healthy**.
+
+**Step 2 — confirm both containers are healthy:**
+
+```bash
+docker compose ps
+# NAME               STATUS
+# payment-app        Up (healthy)
+# payment-postgres   Up (healthy)
+```
+
+**Step 3 — verify the API:**
+
+```bash
+curl http://localhost:8080/actuator/health           # -> {"status":"UP",...}
+
+curl -X POST http://localhost:8080/payments \
+  -H 'Content-Type: application/json' \
+  -d '{"amount":100.0,"currency":"EUR","debtorAccount":"DE123456789","creditorAccount":"DE987654321"}'
+# -> 201 Created
+```
+
+**Step 4 — view logs (optional):**
+
+```bash
+docker compose logs -f app         # follow the application logs (Ctrl+C to stop following)
+```
+
+**Step 5 — stop / clean up:**
+
+```bash
+docker compose down                # stop containers, KEEP the PostgreSQL data volume
+docker compose down -v             # stop AND delete the data volume (fresh DB next time)
+docker compose up -d --build       # rebuild after a code change and restart
+```
+
+> **Podman:** replace `docker compose` with `podman compose` (Podman v4+). Everything else is identical.
 
 ---
 
@@ -319,7 +411,7 @@ profiles:
 
 | Version | File                                    | Description                          |
 |---------|-----------------------------------------|--------------------------------------|
-| V1      | `V1__create_payments_table.sql`         | Creates the `payments` table + index |
+| V1      | `V1__create_payments_table.sql`         | Creates the `payments` table + status index + `version` column (optimistic locking) |
 | V2      | `V2__add_payment_auditing_columns.sql`  | Adds auditing columns                |
 
 Migrations use portable SQL (e.g. `TIMESTAMP WITH TIME ZONE`) so the same scripts run on PostgreSQL
@@ -363,11 +455,17 @@ The Docker `app` service uses this endpoint for its container healthcheck.
 
 The suite contains:
 
-- **`PaymentControllerTest`** — `@WebMvcTest` slice test of the web layer with a mocked service
-  (positive create, validation `400`, not-found `404`, delete response).
-- **`PaymentIntegrationTest`** — `@SpringBootTest` full-stack test running the real Flyway
-  migrations against a **PostgreSQL Testcontainer** (create → read → update → list → delete).
+- **`PaymentControllerTest`** — `@WebMvcTest` slice of the web layer with a mocked service: create
+  `201`, duplicate `409`, validation `400`, update-when-completed `409`, optimistic-lock `409`,
+  not-found `404`, unexpected `500`, and the delete response.
+- **`PaymentIntegrationTest`** — `@SpringBootTest` full-stack test running the real Flyway migrations
+  against a **PostgreSQL Testcontainer**: full lifecycle (create → read → update → list → delete),
+  duplicate rejected with `409`, update of a non-`CREATED` payment rejected, and a **stale-update
+  optimistic-locking** conflict (no lost updates).
+- **`PaymentMapperTest`** — entity ↔ response DTO mapping.
 - **`PaymentApplicationTests`** — context load against the Testcontainer.
+
+Coverage is enforced at **80% line coverage** by the JaCoCo `check` goal during `verify`.
 
 > The integration tests require **Docker running** (Testcontainers starts a throwaway PostgreSQL).
 
@@ -375,8 +473,11 @@ The suite contains:
 
 ## Bruno API collection
 
-End-to-end HTTP tests live in [`bruno/`](bruno) and cover the happy path, all negative cases, and the
-health endpoint:
+[Bruno](https://www.usebruno.com) is an open-source API client (like Postman/Insomnia) whose key
+difference is that collections are **plain files stored in the repository** — so the requests are
+version-controlled and reviewed alongside the code. This project's collection lives in
+[`bruno/`](bruno) and doubles as an end-to-end test suite: it covers the happy path, all negative
+cases, and the health endpoint.
 
 - `Health/` — actuator health check
 - `Payments/` — full lifecycle (create → get → list → update to `COMPLETED` → reject re-update
@@ -386,10 +487,24 @@ health endpoint:
 - `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
   malformed JSON, invalid UUID) and `404`s (get/update/delete unknown id)
 
-### Run it locally
+The collection uses the **`Local`** environment ([`bruno/environments/Local.bru`](bruno/environments/Local.bru)),
+which sets `baseUrl = http://localhost:8080`. **Start the app first** (see
+[Running the application](#running-the-application-locally-step-by-step)).
 
-Requires Node.js (for the Bruno CLI). The collection targets `http://localhost:8080`, so the app
-must be running first.
+### Option 1 — Bruno desktop app (interactive / GUI)
+
+1. Install Bruno from <https://www.usebruno.com> (or `brew install --cask bruno`).
+2. **Open Collection** → select the `bruno/` folder in this repo.
+3. In the top-right **environment** dropdown, choose **Local**.
+4. Click a request (e.g. `Payments / Create Payment`) and press **Send**.
+
+> Requests share variables (e.g. `paymentId`, `dupFirstId`) that earlier requests set via scripts, so
+> within a folder run the requests **top to bottom** — a request that reads `{{paymentId}}` needs the
+> `Create Payment` request run first. "Run Folder" executes them in order automatically.
+
+### Option 2 — Bruno CLI (headless / CI)
+
+Requires Node.js. Runs the whole collection and exits non-zero on any failed assertion.
 
 ```bash
 # 1. Start the app
@@ -407,22 +522,67 @@ echo $?
 Useful options:
 
 ```bash
-npx @usebruno/cli run -r --env Local --reporter-junit results.xml   # JUnit report
+npx @usebruno/cli run -r --env Local --reporter-junit results.xml   # JUnit report (used in CI)
 npx @usebruno/cli run -r --env Local --bail                          # stop on first failure
 npx @usebruno/cli run Payments -r --env Local                        # run a single folder
 ```
 
 > The `-r` (recursive) flag is required because the requests live in subfolders.
 
-You can also open the `bruno/` folder in the **Bruno desktop app**, select the **Local** environment,
-and run requests interactively.
+### Option 3 — Postman, Insomnia, or any other client
+
+You don't need Bruno at all — because the API is **OpenAPI-first**, any client can consume the
+contract directly:
+
+- **Postman:** *Import* → *File* → select
+  [`src/main/resources/openapi/payment-api.yaml`](src/main/resources/openapi/payment-api.yaml). Postman
+  generates a collection with every endpoint and example bodies. Add a collection variable
+  `baseUrl = http://localhost:8080` (or set it per request) and send.
+- **Insomnia / Hoppscotch / anything supporting OpenAPI:** import the same `payment-api.yaml`.
+- **Swagger UI (no import, zero setup):** with the app running, open
+  <http://localhost:8080/swagger-ui.html> and use **Try it out** on each endpoint.
+- **curl / HTTPie:** copy the ready-made commands from the [REST API](#rest-api) section above.
+
+> Prefer to keep using Bruno's exact requests in Postman? The Bruno desktop app can **export** a
+> collection to Postman format (collection menu → *Export*), or convert with the community
+> `bruno-to-postman` tool. But importing `payment-api.yaml` is the simplest path.
+
+---
+
+## Concurrency check
+
+Bruno runs requests **sequentially**, so it can't simulate concurrent load. For that,
+[`scripts/concurrency-check.sh`](scripts/concurrency-check.sh) fires many parallel HTTP requests and
+asserts the invariants that must hold under real-world concurrency.
+
+```bash
+# with the app running (e.g. docker compose up -d --build --wait)
+./scripts/concurrency-check.sh
+# or:  BASE=http://host:8080 THREADS=20 ./scripts/concurrency-check.sh
+```
+
+Requires `curl` and `jq`. It runs two scenarios:
+
+- **Scenario 1 — concurrent updates (pass/fail gate).** Fires `THREADS` simultaneous `PUT`s at the
+  same payment and asserts **exactly one** returns `200` and the rest `409` — i.e. optimistic locking
+  (`@Version`) prevents lost updates. The script exits non-zero if this doesn't hold.
+- **Scenario 2 — concurrent identical creates (informational).** Fires simultaneous identical
+  `POST`s and reports how many `CREATED` rows result. Duplicate detection is a best-effort
+  check-then-insert, so more than one can slip through under a race — a deliberate simplification for a
+  non-required feature (see [`DESIGN.md`](DESIGN.md)).
+
+> It's kept **out of the Bruno collection** (which stays sequential), but CI **does** run it as a
+> dedicated step — only Scenario 1 governs the exit code, and that invariant is deterministic (exactly
+> one update wins regardless of timing), so it won't flake the build. Scenario 2 is printed for
+> visibility. Deterministic JUnit coverage also exists via
+> `PaymentIntegrationTest#staleUpdateIsRejectedByOptimisticLocking`.
 
 ---
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push / pull request to
-`main`/`master` and:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push (any branch) and on pull
+requests to `main`. A single job — **"Build, Run Bruno test collection, Docker image"** — does, in order:
 
 1. Sets up JDK 21 (with Maven caching).
 2. Runs `./mvnw verify` — compiles (including OpenAPI generation) and runs all unit/integration
@@ -430,7 +590,12 @@ and run requests interactively.
 3. Sets up Node.
 4. Starts the full stack with `docker compose up -d --build --wait` (waits for healthchecks).
 5. Runs the **Bruno collection** against the running app with the Bruno CLI.
-6. Tears the stack down.
+6. Runs the **concurrency check** ([`scripts/concurrency-check.sh`](scripts/concurrency-check.sh)) —
+   the optimistic-locking invariant is the pass/fail gate.
+7. Tears the stack down.
+8. **Builds and pushes the Docker image** to the GitHub Container Registry (GHCR), tagged by
+   branch/PR/commit-sha — but **only** for pushes to `main` / PRs into `main`, and only if every
+   step above succeeded.
 
-**Any failure fails the build:** if the stack does not become healthy, or if any Bruno assertion
-fails (the Bruno CLI exits non-zero), the workflow is marked red.
+**Any failure fails the build:** if the stack does not become healthy, or if any Bruno assertion or
+the concurrency check exits non-zero, the workflow is marked red.

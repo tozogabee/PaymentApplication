@@ -132,7 +132,8 @@ class PaymentControllerTest {
                                 {"amount":150.0,"currency":"EUR",
                                  "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
                                 """))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("The payment was modified by another request; please retry."));
     }
 
     @Test
