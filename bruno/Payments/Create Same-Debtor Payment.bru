@@ -1,0 +1,40 @@
+meta {
+  name: Create Same-Debtor Payment
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 300.0,
+    "currency": "EUR",
+    "debtorAccount": "{{sdDebtor}}",
+    "creditorAccount": "SD-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq CREATED
+  res.body.debtorAccount: eq {{sdDebtor}}
+}
+
+script:pre-request {
+  bru.setVar("sdDebtor", "SD-" + Date.now());
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setVar("sdId", res.getBody().id);
+  }
+}

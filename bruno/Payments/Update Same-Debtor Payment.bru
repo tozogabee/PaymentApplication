@@ -1,0 +1,38 @@
+meta {
+  name: Update Same-Debtor Payment
+  type: http
+  seq: 11
+}
+
+put {
+  url: {{baseUrl}}/payments/{{sdId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 300.0,
+    "currency": "EUR",
+    "debtorAccount": "{{sdDebtor}}",
+    "creditorAccount": "SD-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{sdId}}
+  res.body.debtorAccount: eq {{sdDebtor}}
+  res.body.amount: eq 450.0
+  res.body.status: eq COMPLETED
+}
+
+docs {
+  Updating a CREATED payment while keeping the SAME debtor it was created with succeeds (200):
+  the amount changes, the debtor is preserved, and the status transitions to COMPLETED. Update has
+  no duplicate check, so reusing the debtor is fine.
+}
