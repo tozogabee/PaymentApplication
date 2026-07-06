@@ -1,0 +1,33 @@
+meta {
+  name: Update - Invalid Body
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/payments/11111111-1111-1111-1111-111111111111
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": -5.0,
+    "currency": "EURO",
+    "debtorAccount": "",
+    "creditorAccount": "DE987654321"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+docs {
+  Validation applies to PUT as well: an invalid body is rejected with 400 during request binding,
+  before the payment is looked up (so even a non-existent id returns 400, not 404).
+}

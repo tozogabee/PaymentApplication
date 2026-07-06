@@ -152,6 +152,26 @@ class PaymentIntegrationTest {
     }
 
     @Test
+    void failedPaymentCanBeDeleted() throws Exception {
+        Payment failed = this.repository.save(Payment.builder()
+                .amount(new BigDecimal("50.00"))
+                .currency("EUR")
+                .debtorAccount("DE123456789")
+                .creditorAccount("DE987654321")
+                .status(PaymentStatus.FAILED)
+                .build());
+
+        this.mockMvc.perform(delete("/payments/{id}", failed.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Payment deleted successfully"))
+                .andExpect(jsonPath("$.id").value(failed.getId().toString()));
+        this.mockMvc.perform(get("/payments/{id}", failed.getId()))
+                .andExpect(status().isNotFound());
+
+        assertThat(this.repository.count()).isZero();
+    }
+
+    @Test
     void duplicateCreateIsRejectedWith409AndPersistsNothingNew() throws Exception {
         String body = """
                 {"amount":77.0,"currency":"EUR",

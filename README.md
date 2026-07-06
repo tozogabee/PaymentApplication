@@ -608,8 +608,9 @@ cases, and the health endpoint.
 - `Health/` — actuator health check
 - `Payments/` — full lifecycle: create → get → list → update to `COMPLETED` → reject re-update `409`
   → reject delete-of-completed `409` → create a fresh payment → delete it `200` → verify deleted
-- `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
-  malformed JSON, invalid UUID) and `404`s (get/update/delete unknown id)
+- `Negative/` — validation `400`s on create (negative amount, invalid currency, blank field, missing
+  fields, malformed JSON) and on **update** (invalid PUT body), plus invalid UUID `400` and `404`s
+  (get/update/delete unknown id)
   - `Negative/Duplicate/` — the **duplicate-create flow** (create → same payment rejected `409` twice
     → clean up the created row)
 
