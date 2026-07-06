@@ -100,20 +100,20 @@ curl -X POST http://localhost:8080/payments \
       }'
 ```
 
-Response (`201 Created`):
+Response (`201 Created`) — fields are serialized alphabetically:
 
 ```json
 {
-  "id": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f",
   "amount": 100.0,
+  "createdAt": "2026-07-03T17:40:34.981473Z",
+  "createdBy": "system",
+  "creditorAccount": "DE987654321",
   "currency": "EUR",
   "debtorAccount": "DE123456789",
-  "creditorAccount": "DE987654321",
-  "status": "CREATED",
-  "createdAt": "2026-07-03T17:40:34.981Z",
-  "createdBy": "system",
-  "modifiedAt": "2026-07-03T17:40:34.981Z",
-  "modifiedBy": "system"
+  "id": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f",
+  "modifiedAt": "2026-07-03T17:40:34.981473Z",
+  "modifiedBy": "system",
+  "status": "CREATED"
 }
 ```
 
@@ -158,10 +158,10 @@ Any other status is rejected with a `409 Conflict` carrying the debtor/creditor 
 
 ```json
 {
-  "type": "about:blank",
-  "title": "Conflict",
-  "status": 409,
   "detail": "Payment is failed",
+  "instance": "/payments/25c89f74-9d75-45a5-82c2-0f8adb2ad61f",
+  "status": 409,
+  "title": "Conflict",
   "debtorAccount": "DE123456789",
   "creditorAccount": "DE987654321",
   "paymentStatus": "COMPLETED",
@@ -171,42 +171,42 @@ Any other status is rejected with a `409 Conflict` carrying the debtor/creditor 
 
 ### Error responses
 
-**Every** error is returned as an **RFC-7807** `application/problem+json` body — the standard fields
-(`type`, `title`, `status`, `detail`) plus, where relevant, extra properties such as
-`existingPaymentId`, `paymentStatus`, `debtorAccount`, and `creditorAccount`.
+**Every** error is returned as an **RFC-7807** `application/problem+json` body. The standard fields
+`detail`, `instance` (the request path), `status`, and `title` are serialized alphabetically (the
+default `type` `about:blank` is omitted), followed by any extra properties such as `existingPaymentId`,
+`paymentStatus`, `debtorAccount`, and `creditorAccount`.
 
 **`400 Bad Request`** — validation / malformed body / invalid UUID:
 
 ```json
-{ "type": "about:blank", "title": "Bad Request", "status": 400,
-  "detail": "amount: must be greater than 0, currency: size must be between 3 and 3" }
+{ "detail": "amount: must be greater than 0, currency: size must be between 3 and 3, debtorAccount: size must be between 1 and 2147483647",
+  "instance": "/payments", "status": 400, "title": "Bad Request" }
 ```
 
 **`404 Not Found`** — no payment for the id:
 
 ```json
-{ "type": "about:blank", "title": "Not Found", "status": 404,
-  "detail": "Payment not found: 25c89f74-9d75-45a5-82c2-0f8adb2ad61f" }
+{ "detail": "Payment not found: 25c89f74-9d75-45a5-82c2-0f8adb2ad61f",
+  "instance": "/payments/25c89f74-9d75-45a5-82c2-0f8adb2ad61f", "status": 404, "title": "Not Found" }
 ```
 
 **`409 Conflict` — duplicate create** (`POST`), carries the existing payment's id:
 
 ```json
-{ "type": "about:blank", "title": "Conflict", "status": 409,
-  "detail": "A payment already exists for debtor=DE123456789 creditor=DE987654321 (id=25c8…)",
+{ "detail": "A payment already exists for debtor=DE123456789 creditor=DE987654321 (id=25c8…)",
+  "instance": "/payments", "status": 409, "title": "Conflict",
   "existingPaymentId": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f" }
 ```
 
 **`409 Conflict` — deleting a `COMPLETED` payment** (`DELETE`):
 
 ```json
-{ "type": "about:blank", "title": "Conflict", "status": 409,
-  "detail": "Payment 25c8… cannot be deleted because its status is COMPLETED",
-  "paymentStatus": "COMPLETED" }
+{ "detail": "Payment 25c8… cannot be deleted because its status is COMPLETED",
+  "instance": "/payments/25c8…", "status": 409, "title": "Conflict", "paymentStatus": "COMPLETED" }
 ```
 
 **`409 Conflict` — concurrent update** (optimistic-locking) returns
-`{ "status": 409, "detail": "The payment was modified by another request; please retry." }`.
+`{ "detail": "The payment was modified by another request; please retry.", "instance": "/payments/25c8…", "status": 409, "title": "Conflict" }`.
 
 ### API documentation (Swagger UI)
 
