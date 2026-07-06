@@ -62,6 +62,11 @@ jobs:
 
       # --- Docker image: built and pushed to GHCR only for main pushes / PRs into main, and only
       #     if every step above succeeded (a custom `if:` implies success()). ---
+      - name: Set up QEMU
+        # Enables cross-building the arm64 variant on the amd64 runner (for multi-arch images).
+        if: env.PUBLISH_IMAGE == 'true'
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         if: env.PUBLISH_IMAGE == 'true'
         uses: docker/setup-buildx-action@v3
@@ -91,6 +96,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

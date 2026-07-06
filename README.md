@@ -18,6 +18,7 @@ H2 for local testing, with database schema managed by Flyway.
 - [Building the project](#building-the-project)
 - [Running the application (locally, step by step)](#running-the-application-locally-step-by-step)
 - [Running with Docker (whole stack, one command)](#running-with-docker-whole-stack-one-command)
+- [Running the published image (GHCR)](#running-the-published-image-ghcr)
 - [Database migrations (Flyway)](#database-migrations-flyway)
 - [Health & monitoring](#health--monitoring)
 - [Testing](#testing)
@@ -401,6 +402,79 @@ docker compose up -d --build       # rebuild after a code change and restart
 ```
 
 > **Podman:** replace `docker compose` with `podman compose` (Podman v4+). Everything else is identical.
+
+---
+
+## Running the published image (GHCR)
+
+CI publishes the application image to the **GitHub Container Registry** on pushes to `main`
+(see [Continuous integration](#continuous-integration)):
+
+```
+ghcr.io/tozogabee/paymentapplication:latest      # also: :main, :sha-<commit>, :pr-<n>
+```
+
+The image contains only the app (a JRE + the fat jar) — it still needs a PostgreSQL to talk to. The
+datasource is configured via environment variables (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`).
+
+**Step 1 — authenticate to GHCR** (only needed while the package is private; a
+[Personal Access Token](https://github.com/settings/tokens) with the `read:packages` scope):
+
+```bash
+echo "$GHCR_PAT" | docker login ghcr.io -u tozogabee --password-stdin
+```
+
+**Step 2 — pull the image:**
+
+```bash
+docker pull ghcr.io/tozogabee/paymentapplication:latest
+```
+
+> The image is published **multi-arch** (`linux/amd64` + `linux/arm64`), so it runs natively on both
+> Intel/AMD and Apple-Silicon machines. (If you ever hit `no matching manifest for linux/arm64`, that
+> image was built amd64-only — pull/run it with `--platform linux/amd64`, which Docker Desktop runs
+> under emulation.)
+
+**Step 3 — run it with a PostgreSQL** (on a shared Docker network so they can reach each other):
+
+```bash
+docker network create payment-net
+
+docker run -d --name payment-postgres --network payment-net \
+  -e POSTGRES_DB=payment -e POSTGRES_USER=payment -e POSTGRES_PASSWORD=payment \
+  postgres:17-alpine
+
+docker run -d --name payment-app --network payment-net -p 8080:8080 \
+  -e DB_URL=jdbc:postgresql://payment-postgres:5432/payment \
+  -e DB_USERNAME=payment -e DB_PASSWORD=payment \
+  ghcr.io/tozogabee/paymentapplication:latest
+```
+
+**Step 4 — verify** (Flyway runs on startup):
+
+```bash
+curl http://localhost:8080/actuator/health          # -> {"status":"UP",...}
+```
+
+**Step 5 — stop and clean up:**
+
+```bash
+docker rm -f payment-app payment-postgres
+docker network rm payment-net
+```
+
+> **Alternative — reuse compose.** Point the compose `app` service at the published image instead of
+> building it locally, via an override file:
+> ```yaml
+> # docker-compose.ghcr.yml
+> services:
+>   app:
+>     image: ghcr.io/tozogabee/paymentapplication:latest
+> ```
+> ```bash
+> docker compose -f docker-compose.yaml -f docker-compose.ghcr.yml up -d
+> ```
+> The override's `image:` takes precedence over the base `build:`, so Compose pulls instead of building.
 
 ---
 

@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # --- Build stage: compile and package the Spring Boot jar ---
-FROM eclipse-temurin:21-jdk AS build
+# Pinned to $BUILDPLATFORM so the Maven build always runs natively on the builder (never under QEMU
+# emulation) even for multi-arch builds. The jar is architecture-independent, so it's built once and
+# reused; only the runtime stage below is built per target architecture.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 WORKDIR /app
 
 # Cache dependencies first (only re-runs when pom/wrapper change)
