@@ -54,13 +54,18 @@ CREATED."* A client cannot inject a status.
 schema keeps validation in the same single source of truth (decision 1), rather than hand-written
 `if` checks.
 
-## 6. Update is a status state machine
+## 6. Status state machine (update & delete)
 
-**Decision.** Only a `CREATED` payment can be updated (and doing so transitions it to `COMPLETED`);
-updating a `COMPLETED` or `FAILED` payment is rejected with `409 Conflict`.
+**Decision.**
+- Only a `CREATED` payment can be updated (which transitions it to `COMPLETED`); updating a
+  `COMPLETED`/`FAILED` payment is rejected with `409 Conflict`.
+- A `COMPLETED` payment cannot be deleted (`409 Conflict` with an error message); `CREATED` and
+  `FAILED` payments can be deleted.
 
-**Why.** The task's *"prevent invalid updates (e.g. modifying a completed payment)."* Terminal states
-stay terminal, so the lifecycle can't be corrupted.
+**Why.** The task's *"prevent invalid updates (e.g. modifying a completed payment)"* — and, by the
+same reasoning, a **settled (`COMPLETED`) payment is a record you keep**, not something a client
+should be able to erase. Guarding both the update and delete paths keeps the lifecycle and the audit
+trail intact; the status is the single gate for what's allowed.
 
 ## 7. Duplicate create → `409 Conflict`, not a `FAILED` record
 

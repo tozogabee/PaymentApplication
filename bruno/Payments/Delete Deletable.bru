@@ -1,0 +1,20 @@
+meta {
+  name: Delete Deletable
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/payments/{{deletableId}}
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.message: eq Payment deleted successfully
+  res.body.id: eq {{deletableId}}
+}
+
+docs {
+  A CREATED payment can be deleted -> 200 with a confirmation message.
+}

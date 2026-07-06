@@ -18,7 +18,7 @@ body:json {
   {
     "amount": 100.0,
     "currency": "eur",
-    "debtorAccount": "DE123456789",
+    "debtorAccount": "{{uniqueDebtor}}",
     "creditorAccount": "DE987654321"
   }
 }
@@ -31,6 +31,12 @@ assert {
   res.body.amount: eq 100.0
   res.body.createdAt: isDefined
   res.body.createdBy: eq system
+}
+
+script:pre-request {
+  // Unique debtor per run: this payment is later moved to COMPLETED, and COMPLETED payments cannot
+  // be deleted, so a fresh tuple keeps the collection re-runnable against a persistent database.
+  bru.setVar("uniqueDebtor", "DE-" + Date.now());
 }
 
 script:post-response {

@@ -1,0 +1,39 @@
+meta {
+  name: Create Deletable
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 25.0,
+    "currency": "EUR",
+    "debtorAccount": "{{deletableDebtor}}",
+    "creditorAccount": "DEL-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq CREATED
+}
+
+script:pre-request {
+  bru.setVar("deletableDebtor", "DEL-" + Date.now());
+}
+
+script:post-response {
+  if (res.getStatus() === 201) {
+    bru.setVar("deletableId", res.getBody().id);
+  }
+}

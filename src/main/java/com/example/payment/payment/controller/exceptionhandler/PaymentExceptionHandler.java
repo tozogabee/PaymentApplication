@@ -1,6 +1,7 @@
 package com.example.payment.payment.controller.exceptionhandler;
 
 import com.example.payment.payment.exception.DuplicatePaymentException;
+import com.example.payment.payment.exception.PaymentNotDeletableException;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.exception.PaymentNotUpdatableException;
 import java.util.stream.Collectors;
@@ -29,11 +30,15 @@ public class PaymentExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     @ExceptionHandler(PaymentNotUpdatableException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public PaymentNotUpdatableException handleNotUpdatable(PaymentNotUpdatableException ex) {
+    public ProblemDetail handleNotUpdatable(PaymentNotUpdatableException ex) {
         log.warn("Payment update conflict: status={} debtor={} creditor={}",
                 ex.getStatus(), ex.getDebtorAccount(), ex.getCreditorAccount());
-        return ex;
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setProperty("debtorAccount", ex.getDebtorAccount());
+        problem.setProperty("creditorAccount", ex.getCreditorAccount());
+        problem.setProperty("paymentStatus", ex.getStatus());
+        problem.setProperty("existingPaymentId", ex.getExistingPaymentId());
+        return problem;
     }
 
     @ExceptionHandler(DuplicatePaymentException.class)
@@ -41,6 +46,15 @@ public class PaymentExceptionHandler extends ResponseEntityExceptionHandler {
         log.warn("Duplicate payment rejected: {}", ex.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         problem.setProperty("existingPaymentId", ex.getExistingPaymentId());
+        return problem;
+    }
+
+    @ExceptionHandler(PaymentNotDeletableException.class)
+    public ProblemDetail handleNotDeletable(PaymentNotDeletableException ex) {
+        log.warn("Delete rejected: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        // "paymentStatus" (not "status") to avoid colliding with ProblemDetail's own numeric status field.
+        problem.setProperty("paymentStatus", ex.getStatus());
         return problem;
     }
 
@@ -59,7 +73,7 @@ public class PaymentExceptionHandler extends ResponseEntityExceptionHandler {
                 .collect(Collectors.joining(", "));
         log.warn("Validation failed: {}", detail);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
-        return handleExceptionInternal(ex, problem, headers, HttpStatus.BAD_REQUEST, request);
+        return this.handleExceptionInternal(ex, problem, headers, HttpStatus.BAD_REQUEST, request);
     }
 
     @ExceptionHandler(Exception.class)

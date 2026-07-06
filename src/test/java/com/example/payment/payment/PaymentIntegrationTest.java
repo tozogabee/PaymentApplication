@@ -43,13 +43,12 @@ class PaymentIntegrationTest {
 
     @BeforeEach
     void clearPayments() {
-        repository.deleteAll();   // isolate tests: assertions on the full list must not see other tests' data
+        this.repository.deleteAll();
     }
 
     @Test
     void fullPaymentLifecycleAgainstPostgres() throws Exception {
-        // create
-        String body = mockMvc.perform(post("/payments")
+        String body = this.mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"amount":100.0,"currency":"eur",
@@ -62,15 +61,13 @@ class PaymentIntegrationTest {
                 .andExpect(jsonPath("$.createdBy").value("system"))
                 .andReturn().getResponse().getContentAsString();
 
-        String id = objectMapper.readTree(body).get("id").asText();
+        String id = this.objectMapper.readTree(body).get("id").asString();
 
-        // read
-        mockMvc.perform(get("/payments/{id}", id))
+        this.mockMvc.perform(get("/payments/{id}", id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id));
 
-        // update: CREATED -> COMPLETED
-        mockMvc.perform(put("/payments/{id}", id)
+        this.mockMvc.perform(put("/payments/{id}", id)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"amount":150.0,"currency":"EUR",
@@ -81,40 +78,59 @@ class PaymentIntegrationTest {
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.modifiedBy").value("system"));
 
-        // update again: already COMPLETED -> rejected
-        mockMvc.perform(put("/payments/{id}", id)
+        this.mockMvc.perform(put("/payments/{id}", id)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"amount":200.0,"currency":"EUR",
                                  "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
                                 """))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("Payment is failed"))
+                .andExpect(jsonPath("$.detail").value("Payment is failed"))
                 .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
                 .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
-                .andExpect(jsonPath("$.status").value("COMPLETED"));
+                .andExpect(jsonPath("$.paymentStatus").value("COMPLETED"));
 
-        // list
-        String listBody = mockMvc.perform(get("/payments"))
+        String listBody = this.mockMvc.perform(get("/payments"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        JsonNode list = objectMapper.readTree(listBody);
+        JsonNode list = this.objectMapper.readTree(listBody);
         assertThat(list).hasSize(1);
 
-        // delete
-        mockMvc.perform(delete("/payments/{id}", id))
+        this.mockMvc.perform(delete("/payments/{id}", id))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail")
+                        .value("Payment %s cannot be deleted because its status is COMPLETED".formatted(id)));
+        this.mockMvc.perform(get("/payments/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+
+        assertThat(this.repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void createdPaymentCanBeDeleted() throws Exception {
+        String body = this.mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":25.0,"currency":"EUR","debtorAccount":"DEL-D","creditorAccount":"DEL-C"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String id = this.objectMapper.readTree(body).get("id").asString();
+
+        this.mockMvc.perform(delete("/payments/{id}", id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Payment deleted successfully"))
                 .andExpect(jsonPath("$.id").value(id));
-        mockMvc.perform(get("/payments/{id}", id))
+        this.mockMvc.perform(get("/payments/{id}", id))
                 .andExpect(status().isNotFound());
 
-        assertThat(repository.count()).isZero();
+        assertThat(this.repository.count()).isZero();
     }
 
     @Test
     void updateFailedPaymentIsRejected() throws Exception {
-        Payment failed = repository.save(Payment.builder()
+        Payment failed = this.repository.save(Payment.builder()
                 .amount(new BigDecimal("50.00"))
                 .currency("EUR")
                 .debtorAccount("DE123456789")
@@ -122,17 +138,17 @@ class PaymentIntegrationTest {
                 .status(PaymentStatus.FAILED)
                 .build());
 
-        mockMvc.perform(put("/payments/{id}", failed.getId())
+        this.mockMvc.perform(put("/payments/{id}", failed.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"amount":150.0,"currency":"EUR",
                                  "debtorAccount":"DE123456789","creditorAccount":"DE987654321"}
                                 """))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("Payment is failed"))
+                .andExpect(jsonPath("$.detail").value("Payment is failed"))
                 .andExpect(jsonPath("$.debtorAccount").value("DE123456789"))
                 .andExpect(jsonPath("$.creditorAccount").value("DE987654321"))
-                .andExpect(jsonPath("$.status").value("FAILED"));
+                .andExpect(jsonPath("$.paymentStatus").value("FAILED"));
     }
 
     @Test
@@ -142,39 +158,34 @@ class PaymentIntegrationTest {
                  "debtorAccount":"DUP-DEBTOR","creditorAccount":"DUP-CREDITOR"}
                 """;
 
-        // first payment for this debtor/creditor/amount/currency -> CREATED (201)
-        String firstBody = mockMvc.perform(post("/payments")
+        String firstBody = this.mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andReturn().getResponse().getContentAsString();
-        String firstId = objectMapper.readTree(firstBody).get("id").asString();
+        String firstId = this.objectMapper.readTree(firstBody).get("id").asString();
 
-        long countAfterFirst = repository.count();
+        long countAfterFirst = this.repository.count();
 
-        // identical payment -> rejected with 409 Conflict, pointing at the existing payment, and
-        // nothing new is persisted.
-        mockMvc.perform(post("/payments")
+        this.mockMvc.perform(post("/payments")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.existingPaymentId").value(firstId));
 
-        assertThat(repository.count()).isEqualTo(countAfterFirst);
+        assertThat(this.repository.count()).isEqualTo(countAfterFirst);
     }
 
     @Test
     void deleteUnknownPaymentReturns404() throws Exception {
-        mockMvc.perform(delete("/payments/{id}", "11111111-1111-1111-1111-111111111111"))
+        this.mockMvc.perform(delete("/payments/{id}", "11111111-1111-1111-1111-111111111111"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void staleUpdateIsRejectedByOptimisticLocking() {
-        // Persist a payment, then read it twice as two independent (detached) copies at the same
-        // @Version. This is exactly what two concurrent requests would each hold.
-        UUID id = repository.saveAndFlush(Payment.builder()
+        UUID id = this.repository.saveAndFlush(Payment.builder()
                 .amount(new BigDecimal("10.00"))
                 .currency("EUR")
                 .debtorAccount("OPT-DEBTOR")
@@ -182,19 +193,16 @@ class PaymentIntegrationTest {
                 .status(PaymentStatus.CREATED)
                 .build()).getId();
 
-        Payment firstWriter = repository.findById(id).orElseThrow();
-        Payment secondWriter = repository.findById(id).orElseThrow();
+        Payment firstWriter = this.repository.findById(id).orElseThrow();
+        Payment secondWriter = this.repository.findById(id).orElseThrow();
 
-        // The first writer commits and bumps the version.
         firstWriter.setAmount(new BigDecimal("20.00"));
-        repository.saveAndFlush(firstWriter);
+        this.repository.saveAndFlush(firstWriter);
 
-        // The second writer still holds the old version -> optimistic-lock conflict (no lost update).
         secondWriter.setAmount(new BigDecimal("30.00"));
-        assertThatThrownBy(() -> repository.saveAndFlush(secondWriter))
+        assertThatThrownBy(() -> this.repository.saveAndFlush(secondWriter))
                 .isInstanceOf(ObjectOptimisticLockingFailureException.class);
 
-        // The winning update stands; the losing one never applied.
-        assertThat(repository.findById(id).orElseThrow().getAmount()).isEqualByComparingTo("20.00");
+        assertThat(this.repository.findById(id).orElseThrow().getAmount()).isEqualByComparingTo("20.00");
     }
 }

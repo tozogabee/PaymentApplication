@@ -25,8 +25,8 @@ body:json {
 
 assert {
   res.status: eq 409
-  res.body.message: eq Payment is failed
+  res.body.detail: eq Payment is failed
   res.body.debtorAccount: eq DE123456789
   res.body.creditorAccount: eq DE987654321
-  res.body.status: eq COMPLETED
+  res.body.paymentStatus: eq COMPLETED
 }

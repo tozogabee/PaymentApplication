@@ -1,0 +1,21 @@
+meta {
+  name: Delete Completed (Rejected)
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  auth: none
+}
+
+assert {
+  res.status: eq 409
+  res.body.paymentStatus: eq COMPLETED
+  res.body.detail: isDefined
+}
+
+docs {
+  The payment was moved to COMPLETED, so it cannot be deleted (kept for audit). The API returns
+  409 Conflict with an error message in `detail`; the payment is NOT removed.
+}

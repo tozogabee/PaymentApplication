@@ -26,25 +26,25 @@ public class PaymentController implements PaymentsApi {
     @Override
     public ResponseEntity<PaymentResponse> createPayment(PaymentRequest request) {
         log.info("POST /payments - debtor={} creditor={}", request.getDebtorAccount(), request.getCreditorAccount());
-        Payment created = service.create(
+        Payment created = this.service.create(
                 request.getAmount(),
                 request.getCurrency(),
                 request.getDebtorAccount(),
                 request.getCreditorAccount());
-        return ResponseEntity.status(HttpStatus.CREATED).body(paymentMapper.toResponse(created));
+        return ResponseEntity.status(HttpStatus.CREATED).body(this.paymentMapper.toResponse(created));
     }
 
     @Override
     public ResponseEntity<PaymentResponse> getPaymentById(UUID id) {
         log.info("GET /payments/{}", id);
-        return ResponseEntity.ok(paymentMapper.toResponse(service.get(id)));
+        return ResponseEntity.ok(this.paymentMapper.toResponse(this.service.get(id)));
     }
 
     @Override
     public ResponseEntity<List<PaymentResponse>> getAllPayments() {
         log.info("GET /payments");
-        List<PaymentResponse> payments = service.list().stream()
-                .map(paymentMapper::toResponse)
+        List<PaymentResponse> payments = this.service.list().stream()
+                .map(this.paymentMapper::toResponse)
                 .toList();
         return ResponseEntity.ok(payments);
     }
@@ -52,19 +52,19 @@ public class PaymentController implements PaymentsApi {
     @Override
     public ResponseEntity<PaymentResponse> updatePayment(UUID id, PaymentRequest request) {
         log.info("PUT /payments/{}", id);
-        Payment payment = service.update(
+        Payment payment = this.service.update(
                 id,
                 request.getAmount(),
                 request.getCurrency(),
                 request.getDebtorAccount(),
                 request.getCreditorAccount());
-        return ResponseEntity.ok(paymentMapper.toResponse(payment));
+        return ResponseEntity.ok(this.paymentMapper.toResponse(payment));
     }
 
     @Override
     public ResponseEntity<DeletePaymentResponse> deletePayment(UUID id) {
         log.info("DELETE /payments/{}", id);
-        service.delete(id);
+        this.service.delete(id);
         return ResponseEntity.ok(new DeletePaymentResponse()
                 .message("Payment deleted successfully")
                 .id(id));

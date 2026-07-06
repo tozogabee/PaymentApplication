@@ -96,6 +96,8 @@ paths:
                 $ref: '#/components/schemas/DeletePaymentResponse'
         '404':
           description: Payment not found
+        '409':
+          description: Payment cannot be deleted in its current status (a COMPLETED payment is kept)
 components:
   parameters:
     PaymentId:

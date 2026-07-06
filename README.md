@@ -72,13 +72,16 @@ this with the authenticated principal once security is added.
 
 Base URL: `http://localhost:8080`
 
-| Method   | Path              | Description             | Success        |
-|----------|-------------------|-------------------------|----------------|
-| `POST`   | `/payments`       | Create a payment        | `201 Created`  |
-| `GET`    | `/payments/{id}`  | Get a payment by id     | `200 OK`       |
-| `GET`    | `/payments`       | List all payments       | `200 OK`       |
-| `PUT`    | `/payments/{id}`  | Update a payment        | `200 OK`       |
-| `DELETE` | `/payments/{id}`  | Delete a payment        | `200 OK` with `{message, id}` |
+| Method   | Path              | Description             | Success        | Error responses |
+|----------|-------------------|-------------------------|----------------|-----------------|
+| `POST`   | `/payments`       | Create a payment        | `201 Created`  | `400` invalid body · `409` duplicate |
+| `GET`    | `/payments/{id}`  | Get a payment by id     | `200 OK`       | `404` not found |
+| `GET`    | `/payments`       | List all payments       | `200 OK`       | — |
+| `PUT`    | `/payments/{id}`  | Update a payment        | `200 OK`       | `400` invalid body · `404` not found · `409` not `CREATED` / concurrent update |
+| `DELETE` | `/payments/{id}`  | Delete a payment        | `200 OK` with `{message, id}` | `404` not found · `409` payment is `COMPLETED` |
+
+All errors are returned as RFC-7807 `application/problem+json` (see [Error responses](#error-responses)
+below and the [Error handling](#error-handling) section).
 
 The API is defined in [`src/main/resources/openapi/payment-api.yaml`](src/main/resources/openapi/payment-api.yaml).
 The Java interfaces and DTOs are generated from it at build time (`generate-sources` phase) into
@@ -135,6 +138,10 @@ Response (`200 OK`):
 { "id": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f", "message": "Payment deleted successfully" }
 ```
 
+> **A `COMPLETED` payment cannot be deleted** (it is kept for audit): the API responds `409 Conflict`
+> with an error message and the payment is left untouched. `CREATED` and `FAILED` payments can be
+> deleted.
+
 ### Update rules (`PUT /payments/{id}`)
 
 Updating a payment enforces a simple status state machine:
@@ -146,17 +153,60 @@ Updating a payment enforces a simple status state machine:
 | `FAILED`       | Rejected → `409 Conflict` (only `CREATED` is updatable) |
 
 Only a payment in `CREATED` status can be updated; a successful update marks it `COMPLETED`.
-Any other status is rejected with a `409 Conflict` whose body reports the debtor/creditor accounts,
-the current status, and the message `Payment is failed`:
+Any other status is rejected with a `409 Conflict` carrying the debtor/creditor accounts, the current
+`paymentStatus`, and the payment id:
 
 ```json
 {
-  "message": "Payment is failed",
+  "type": "about:blank",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "Payment is failed",
   "debtorAccount": "DE123456789",
   "creditorAccount": "DE987654321",
-  "status": "COMPLETED"
+  "paymentStatus": "COMPLETED",
+  "existingPaymentId": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f"
 }
 ```
+
+### Error responses
+
+**Every** error is returned as an **RFC-7807** `application/problem+json` body — the standard fields
+(`type`, `title`, `status`, `detail`) plus, where relevant, extra properties such as
+`existingPaymentId`, `paymentStatus`, `debtorAccount`, and `creditorAccount`.
+
+**`400 Bad Request`** — validation / malformed body / invalid UUID:
+
+```json
+{ "type": "about:blank", "title": "Bad Request", "status": 400,
+  "detail": "amount: must be greater than 0, currency: size must be between 3 and 3" }
+```
+
+**`404 Not Found`** — no payment for the id:
+
+```json
+{ "type": "about:blank", "title": "Not Found", "status": 404,
+  "detail": "Payment not found: 25c89f74-9d75-45a5-82c2-0f8adb2ad61f" }
+```
+
+**`409 Conflict` — duplicate create** (`POST`), carries the existing payment's id:
+
+```json
+{ "type": "about:blank", "title": "Conflict", "status": 409,
+  "detail": "A payment already exists for debtor=DE123456789 creditor=DE987654321 (id=25c8…)",
+  "existingPaymentId": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f" }
+```
+
+**`409 Conflict` — deleting a `COMPLETED` payment** (`DELETE`):
+
+```json
+{ "type": "about:blank", "title": "Conflict", "status": 409,
+  "detail": "Payment 25c8… cannot be deleted because its status is COMPLETED",
+  "paymentStatus": "COMPLETED" }
+```
+
+**`409 Conflict` — concurrent update** (optimistic-locking) returns
+`{ "status": 409, "detail": "The payment was modified by another request; please retry." }`.
 
 ### API documentation (Swagger UI)
 
@@ -181,7 +231,8 @@ Errors are returned as RFC-9457 `application/problem+json`:
   - **duplicate create** — a payment with the same debtor/creditor/amount/currency already exists
     (body includes `existingPaymentId`);
   - **invalid update** — the payment is not in `CREATED` status (already `COMPLETED`/`FAILED`);
-  - **concurrent update** — the payment was modified by another request (optimistic-locking conflict).
+  - **concurrent update** — the payment was modified by another request (optimistic-locking conflict);
+  - **delete of a `COMPLETED` payment** — completed payments are kept for audit and cannot be deleted.
 
 ---
 
@@ -194,7 +245,7 @@ src/main/java/com/example/payment
 └── payment
     ├── controller/PaymentController.java   # implements generated PaymentsApi
     ├── controller/exceptionhandler/PaymentExceptionHandler.java
-    ├── exception/                          # PaymentNotFound, PaymentNotUpdatable, DuplicatePayment
+    ├── exception/                          # AbstractPaymentException + NotFound / NotUpdatable / Duplicate / NotDeletable
     ├── mapper/PaymentMapper.java           # entity -> generated response model
     ├── model/Payment.java                  # JPA entity (auditing + @Version optimistic locking)
     ├── model/PaymentRepository.java
@@ -531,9 +582,10 @@ The suite contains:
 
 - **`PaymentControllerTest`** — `@WebMvcTest` slice of the web layer with a mocked service: create
   `201`, duplicate `409`, validation `400`, update-when-completed `409`, optimistic-lock `409`,
-  not-found `404`, unexpected `500`, and the delete response.
+  not-found `404`, unexpected `500`, delete `200`, and delete-of-completed `409`.
 - **`PaymentIntegrationTest`** — `@SpringBootTest` full-stack test running the real Flyway migrations
-  against a **PostgreSQL Testcontainer**: full lifecycle (create → read → update → list → delete),
+  against a **PostgreSQL Testcontainer**: full lifecycle (create → read → update to `COMPLETED` →
+  reject re-update → **reject delete-of-completed**), a `CREATED` payment being deleted successfully,
   duplicate rejected with `409`, update of a non-`CREATED` payment rejected, and a **stale-update
   optimistic-locking** conflict (no lost updates).
 - **`PaymentMapperTest`** — entity ↔ response DTO mapping.
@@ -554,8 +606,8 @@ version-controlled and reviewed alongside the code. This project's collection li
 cases, and the health endpoint.
 
 - `Health/` — actuator health check
-- `Payments/` — full lifecycle (create → get → list → update to `COMPLETED` → reject re-update
-  `409` → delete → verify deleted)
+- `Payments/` — full lifecycle: create → get → list → update to `COMPLETED` → reject re-update `409`
+  → reject delete-of-completed `409` → create a fresh payment → delete it `200` → verify deleted
 - `Duplicate/` — creates a payment, then submits the same payment twice more and asserts each is
   rejected with `409 Conflict`, before deleting the created row (self-cleaning, so it stays repeatable)
 - `Negative/` — validation `400`s (negative amount, invalid currency, blank field, missing fields,
