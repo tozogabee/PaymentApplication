@@ -144,17 +144,18 @@ Response (`200 OK`):
 
 ### Update rules (`PUT /payments/{id}`)
 
-Updating a payment enforces a simple status state machine:
+`PUT` doubles as **"submit this payment for processing"**: it updates the fields of a `CREATED`
+payment and then hands it to a [payment gateway](#payment-gateway-simulating-failed), whose outcome
+drives the final status.
 
-| Current status | Result of update                                        |
-|----------------|---------------------------------------------------------|
-| `CREATED`      | Fields updated **and status transitions to `COMPLETED`** → `200 OK` |
-| `COMPLETED`    | Rejected → `409 Conflict` (already completed)           |
-| `FAILED`       | Rejected → `409 Conflict` (only `CREATED` is updatable) |
+| Current status | Result of update                                                          |
+|----------------|---------------------------------------------------------------------------|
+| `CREATED`      | Fields updated, then submitted to the gateway → **`COMPLETED`** (approved) or **`FAILED`** (declined), `200 OK` |
+| `COMPLETED`    | Rejected → `409 Conflict` (already completed)                             |
+| `FAILED`       | Rejected → `409 Conflict` (only `CREATED` is updatable)                   |
 
-Only a payment in `CREATED` status can be updated; a successful update marks it `COMPLETED`.
-Any other status is rejected with a `409 Conflict` carrying the debtor/creditor accounts, the current
-`paymentStatus`, and the payment id:
+Only a payment in `CREATED` status can be updated. Any other status is rejected with a `409 Conflict`
+carrying the debtor/creditor accounts, the current `paymentStatus`, and the payment id:
 
 ```json
 {
@@ -167,6 +168,26 @@ Any other status is rejected with a `409 Conflict` carrying the debtor/creditor 
   "paymentStatus": "COMPLETED",
   "existingPaymentId": "25c89f74-9d75-45a5-82c2-0f8adb2ad61f"
 }
+```
+
+### Payment gateway (simulating `FAILED`)
+
+`CREATED` is assigned at creation, and the terminal `COMPLETED` / `FAILED` statuses are decided by a
+mock **payment gateway** (`PaymentGateway` port + `MockPaymentGateway` adapter) invoked from `PUT`.
+This keeps a clear seam where a real bank / PSP integration would plug in. The mock's behaviour is
+controlled by the `PAYMENT_GATEWAY_MODE` environment variable (property `payment.gateway.mode`):
+
+| Mode             | Every `PUT` results in… | Used by                                             |
+|------------------|-------------------------|-----------------------------------------------------|
+| `RANDOM`         | `COMPLETED` or `FAILED` at random | the default for a plain `./mvnw spring-boot:run`    |
+| `ALWAYS_APPROVE` | `COMPLETED`             | the containerised app / CI (deterministic E2E tests)|
+| `ALWAYS_DECLINE` | `FAILED`                | on-demand, to demonstrate the `FAILED` path         |
+
+`docker compose up` runs in `ALWAYS_APPROVE`. To watch a payment go to `FAILED`, start it declined:
+
+```bash
+PAYMENT_GATEWAY_MODE=ALWAYS_DECLINE docker compose up -d --build --wait
+# create a payment (CREATED) then PUT it -> the gateway declines -> status FAILED
 ```
 
 ### Error responses
@@ -613,6 +634,10 @@ cases, and the health endpoint.
   (get/update/delete unknown id)
   - `Negative/Duplicate/` — the **duplicate-create flow** (create → same payment rejected `409` twice
     → clean up the created row)
+- `Gateway/` — the **[payment-gateway](#payment-gateway-simulating-failed) flow**: create → `PUT`
+  (submit to the gateway) → verify the terminal status (`COMPLETED` or `FAILED`) is persisted. The
+  outcome assertion is mode-agnostic, so it passes under any `PAYMENT_GATEWAY_MODE`; run the stack
+  with `ALWAYS_DECLINE` to exercise the `FAILED` path specifically.
 
 The collection uses the **`Local`** environment ([`bruno/environments/Local.bru`](bruno/environments/Local.bru)),
 which sets `baseUrl = http://localhost:8080`. **Start the app first** (see

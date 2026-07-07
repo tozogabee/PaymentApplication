@@ -1,0 +1,49 @@
+meta {
+  name: Process Via Gateway
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/payments/{{gwId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "amount": 123.0,
+    "currency": "EUR",
+    "debtorAccount": "{{gwDebtor}}",
+    "creditorAccount": "GW-CREDITOR"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+script:post-response {
+  bru.setVar("gwOutcome", res.getBody().status);
+}
+
+tests {
+  test("PUT submits to the gateway and resolves to a terminal status", function() {
+    expect(["COMPLETED", "FAILED"]).to.include(res.getBody().status);
+  });
+}
+
+docs {
+  PUT submits the CREATED payment to the mock payment gateway; the resulting status is decided by the
+  gateway, not the client:
+    - PAYMENT_GATEWAY_MODE=ALWAYS_APPROVE (the docker compose default) -> COMPLETED
+    - PAYMENT_GATEWAY_MODE=ALWAYS_DECLINE                              -> FAILED
+    - PAYMENT_GATEWAY_MODE=RANDOM                                      -> either
+  The test accepts either terminal status so it stays green in every mode; "Verify Terminal Status"
+  then confirms the outcome was persisted. To watch the FAILED path, start the app with
+  ALWAYS_DECLINE, e.g. `PAYMENT_GATEWAY_MODE=ALWAYS_DECLINE docker compose up`.
+}

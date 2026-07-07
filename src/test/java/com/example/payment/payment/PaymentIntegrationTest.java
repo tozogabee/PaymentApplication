@@ -2,6 +2,8 @@ package com.example.payment.payment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -11,6 +13,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.example.payment.TestcontainersConfiguration;
 import com.example.payment.api.model.PaymentStatus;
+import com.example.payment.payment.gateway.PaymentGateway;
+import com.example.payment.payment.gateway.PaymentOutcome;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
 import java.math.BigDecimal;
@@ -23,6 +27,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -41,9 +46,15 @@ class PaymentIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @MockitoBean
+    private PaymentGateway gateway;
+
     @BeforeEach
     void clearPayments() {
         this.repository.deleteAll();
+        // Default the gateway to APPROVED so update flows deterministically complete;
+        // individual tests override this to exercise the declined / FAILED path.
+        when(this.gateway.process(any())).thenReturn(PaymentOutcome.APPROVED);
     }
 
     @Test
@@ -126,6 +137,36 @@ class PaymentIntegrationTest {
                 .andExpect(status().isNotFound());
 
         assertThat(this.repository.count()).isZero();
+    }
+
+    @Test
+    void updateDeclinedByGatewayMarksPaymentFailed() throws Exception {
+        when(this.gateway.process(any())).thenReturn(PaymentOutcome.DECLINED);
+
+        String body = this.mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":80.0,"currency":"EUR",
+                                 "debtorAccount":"GW-DEBTOR","creditorAccount":"GW-CREDITOR"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CREATED"))
+                .andReturn().getResponse().getContentAsString();
+        String id = this.objectMapper.readTree(body).get("id").asString();
+
+        this.mockMvc.perform(put("/payments/{id}", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount":80.0,"currency":"EUR",
+                                 "debtorAccount":"GW-DEBTOR","creditorAccount":"GW-CREDITOR"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"));
+
+        // The FAILED status is persisted, not just returned.
+        this.mockMvc.perform(get("/payments/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"));
     }
 
     @Test

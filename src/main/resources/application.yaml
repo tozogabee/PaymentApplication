@@ -13,6 +13,14 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+# Mock payment gateway: how a PUT (which submits the payment to the gateway) resolves.
+#   RANDOM (default) -> approve/decline at random, so both COMPLETED and FAILED appear on a plain run
+#   ALWAYS_APPROVE   -> always COMPLETED (the containerised app / CI use this for deterministic E2E)
+#   ALWAYS_DECLINE   -> always FAILED  (to demonstrate the FAILED path on demand)
+payment:
+  gateway:
+    mode: ${PAYMENT_GATEWAY_MODE:RANDOM}
+
 management:
   endpoint:
     health:

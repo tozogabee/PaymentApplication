@@ -1,0 +1,23 @@
+meta {
+  name: Verify Terminal Status
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/payments/{{gwId}}
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("the gateway outcome is persisted", function() {
+    expect(res.getBody().status).to.equal(bru.getVar("gwOutcome"));
+  });
+  test("the payment is no longer CREATED", function() {
+    expect(res.getBody().status).to.not.equal("CREATED");
+  });
+}

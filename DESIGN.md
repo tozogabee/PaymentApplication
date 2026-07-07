@@ -40,7 +40,8 @@ amount, `String`-length-limited fields, enum `status`.
 ## 4. Status is backend-managed
 
 **Decision.** `PaymentRequest` has **no `status` field**; `PaymentService.create` always sets
-`CREATED`.
+`CREATED`, and the terminal `COMPLETED` / `FAILED` statuses are decided by the payment gateway
+(decision 14), never by the client.
 
 **Why.** The task rules: *"status is managed by the backend"* and *"new payment status should be
 CREATED."* A client cannot inject a status.
@@ -57,8 +58,9 @@ schema keeps validation in the same single source of truth (decision 1), rather 
 ## 6. Status state machine (update & delete)
 
 **Decision.**
-- Only a `CREATED` payment can be updated (which transitions it to `COMPLETED`); updating a
-  `COMPLETED`/`FAILED` payment is rejected with `409 Conflict`.
+- Only a `CREATED` payment can be updated (which submits it to the gateway and transitions it to
+  `COMPLETED` or `FAILED` — see decision 14); updating a `COMPLETED`/`FAILED` payment is rejected
+  with `409 Conflict`.
 - A `COMPLETED` payment cannot be deleted (`409 Conflict` with an error message); `CREATED` and
   `FAILED` payments can be deleted.
 
@@ -146,3 +148,19 @@ production), black-box HTTP for the contract, and a parallel-load check for the 
 while being explicit that the non-required race is intentionally left simple. A race-proof version
 would use a partial unique index (`WHERE status = 'CREATED'`) plus an isolated-attempt + retry, but
 that's more machinery than the "simple and focused" brief warrants for a non-required feature.
+
+## 14. Payment gateway seam (how `COMPLETED` / `FAILED` are decided)
+
+**Decision.** Terminal statuses are not hard-coded in the service. A `PaymentGateway` port
+(`process(Payment) -> APPROVED | DECLINED`) is invoked from `PUT`; `MockPaymentGateway` is the
+stand-in adapter. Its behaviour is configuration-driven via `payment.gateway.mode`:
+`RANDOM` (default), `ALWAYS_APPROVE`, or `ALWAYS_DECLINE`.
+
+**Why.** Without an external processor, `FAILED` is otherwise unreachable through the API — the
+status enum would advertise a state the service can never produce. Modelling the decision as a port
+(a) makes `FAILED` a real, reachable outcome, (b) marks exactly where a real bank / PSP integration
+would plug in, and (c) keeps tests deterministic where they must be: JUnit tests replace the port
+with a Mockito mock, and the containerised app / CI pin `ALWAYS_APPROVE` so the end-to-end (Bruno)
+update assertions are stable, while `ALWAYS_DECLINE` demonstrates the `FAILED` path on demand.
+Reinterpreting the existing `PUT` as "submit for processing" (rather than adding a new endpoint)
+keeps the surface at the five CRUD operations the task asks for.
