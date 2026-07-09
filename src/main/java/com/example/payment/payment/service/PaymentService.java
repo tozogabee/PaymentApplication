@@ -5,6 +5,8 @@ import com.example.payment.payment.exception.DuplicatePaymentException;
 import com.example.payment.payment.exception.PaymentNotDeletableException;
 import com.example.payment.payment.exception.PaymentNotFoundException;
 import com.example.payment.payment.exception.PaymentNotUpdatableException;
+import com.example.payment.payment.gateway.PaymentGateway;
+import com.example.payment.payment.gateway.PaymentOutcome;
 import com.example.payment.payment.model.Payment;
 import com.example.payment.payment.model.PaymentRepository;
 import java.math.BigDecimal;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class PaymentService {
 
     private final PaymentRepository repository;
+    private final PaymentGateway gateway;
 
     @Transactional
     public Payment create(BigDecimal amount, String currency, String debtorAccount, String creditorAccount) {
@@ -79,9 +82,14 @@ public class PaymentService {
         payment.setCurrency(currency.toUpperCase());
         payment.setDebtorAccount(debtorAccount);
         payment.setCreditorAccount(creditorAccount);
-        payment.setStatus(PaymentStatus.COMPLETED);
+
+        // Submit the payment to the gateway (simulates a bank / PSP): approved money movement
+        // completes the payment, a declined one marks it as failed.
+        PaymentOutcome outcome = this.gateway.process(payment);
+        payment.setStatus(outcome == PaymentOutcome.APPROVED ? PaymentStatus.COMPLETED : PaymentStatus.FAILED);
+
         Payment updated = this.repository.saveAndFlush(payment);
-        log.info("Updated payment id={} - status transitioned to COMPLETED", id);
+        log.info("Processed payment id={} - gateway outcome={} -> status={}", id, outcome, updated.getStatus());
         return updated;
     }
 

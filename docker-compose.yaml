@@ -9,6 +9,10 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/payment
       DB_USERNAME: payment
       DB_PASSWORD: payment
+      # Deterministic gateway for the E2E (Bruno) suite: every PUT approves -> COMPLETED.
+      # Override to ALWAYS_DECLINE (or RANDOM) to exercise the FAILED path, e.g.
+      #   PAYMENT_GATEWAY_MODE=ALWAYS_DECLINE docker compose up
+      PAYMENT_GATEWAY_MODE: ${PAYMENT_GATEWAY_MODE:-ALWAYS_APPROVE}
     ports:
       - "8080:8080"
     healthcheck:
